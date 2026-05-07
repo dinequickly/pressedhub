@@ -1,0 +1,12 @@
+.DS_Store
+.env
+.env.local
+node_modules/
+supabase/.branches/
+supabase/.temp/
+supabase/.env
+supabase/seed/.generated.sql
+*.log
+.vscode/
+.idea/
+dist/

@@ -1,0 +1,27 @@
+{
+  "name": "hubbackend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Supabase backend for the workflow/agent hub. All agent execution runs on Anthropic Managed Agents.",
+  "scripts": {
+    "supabase": "supabase",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:diff": "supabase db diff",
+    "db:push": "supabase db push",
+    "types:gen": "supabase gen types typescript --local > supabase/functions/_shared/database.types.ts",
+    "fn:serve": "supabase functions serve --env-file .env",
+    "fn:deploy": "supabase functions deploy --use-api",
+    "smoke:a": "bash scripts/smoke-phase-a.sh",
+    "smoke:b": "bash scripts/smoke-phase-b.sh",
+    "smoke:c": "bash scripts/smoke-phase-c.sh",
+    "smoke:d": "bash scripts/smoke-phase-d.sh",
+    "smoke:e": "bash scripts/smoke-phase-e.sh",
+    "smoke:f": "bash scripts/smoke-phase-f.sh",
+    "smoke:all": "bash scripts/smoke-all.sh"
+  },
+  "devDependencies": {
+    "supabase": "^1.200.0"
+  }
+}

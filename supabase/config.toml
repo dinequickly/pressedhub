@@ -1,0 +1,61 @@
+# Supabase project configuration. https://supabase.com/docs/guides/cli/config
+project_id = "hubbackend"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+api_url = "http://127.0.0.1"
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["https://127.0.0.1:3000"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = false
+enable_confirmations = false
+
+[edge_runtime]
+enabled = true
+policy = "oneshot"
+inspector_port = 8083
+
+# Disable JWT verification for the public webhook endpoints. The functions
+# verify the Anthropic webhook signature themselves.
+[functions.webhooks-anthropic]
+verify_jwt = false
+
+[functions.triggers-webhook]
+verify_jwt = false
+
+[functions.triggers-email-inbound]
+verify_jwt = false
