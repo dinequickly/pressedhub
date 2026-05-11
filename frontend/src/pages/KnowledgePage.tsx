@@ -69,7 +69,7 @@ export function KnowledgePage() {
   return (
     <Page
       title="Knowledge"
-      subtitle="Files Claude can search across your runs"
+      subtitle="Reference files, uploads, and source material your workspace can pull from."
       actions={
         <>
           <button className="btn-ghost" onClick={() => setCreatingFolder(true)}>

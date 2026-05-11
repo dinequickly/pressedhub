@@ -12,42 +12,10 @@ import { requireUser } from "../_shared/auth.ts";
 import { BadRequest, NotFound, noContent, ok, Upstream } from "../_shared/errors.ts";
 import { AgentCreateSchema, AgentUpdateSchema } from "../_shared/schemas.ts";
 import { AnthropicAgents } from "../_shared/anthropic.ts";
-import { KB_TOOL_DEFS, KB_TOOL_NAMES } from "../_shared/kb_tools.ts";
+import { skillsForAnthropic, withBuiltinTools } from "../_shared/agent_config.ts";
 import { writeAudit } from "../_shared/audit.ts";
 
 const router = new Router("agents");
-
-// Every agent gets the KB toolset for free, on top of whatever toolset the
-// caller specified. Strip any pre-existing kb_* entries to keep create/update
-// idempotent if the caller round-trips agent.tools through us.
-function withKbTools(stored: unknown[]): Record<string, unknown>[] {
-  const base = (stored ?? []).filter((t) => {
-    if (typeof t !== "object" || t === null) return true;
-    const name = (t as Record<string, unknown>).name;
-    return !(typeof name === "string" && (KB_TOOL_NAMES as readonly string[]).includes(name));
-  }) as Record<string, unknown>[];
-  return [...base, ...KB_TOOL_DEFS];
-}
-
-// Skill entries are stored locally with a `local_id` so the UI can round-trip
-// the selection. Anthropic only accepts `type` / `skill_id` / `version`, so we
-// strip the local-only fields before forwarding.
-function skillsForAnthropic(stored: unknown[]): Record<string, unknown>[] {
-  return (stored ?? [])
-    .map((s) => {
-      if (typeof s !== "object" || s === null) return null;
-      const o = s as Record<string, unknown>;
-      const skill_id = o.skill_id ?? o.id;
-      const type = o.type;
-      if (typeof skill_id !== "string" || (type !== "anthropic" && type !== "custom")) {
-        return null;
-      }
-      const out: Record<string, unknown> = { type, skill_id };
-      if (type === "custom") out.version = (o.version as string) ?? "latest";
-      return out;
-    })
-    .filter(Boolean) as Record<string, unknown>[];
-}
 
 router.get("/", async (req) => {
   const user = await requireUser(req);
@@ -84,7 +52,7 @@ router.post("/", async (req) => {
       name: parsed.name,
       model: parsed.model,
       system: parsed.system_prompt,
-      tools: withKbTools(
+      tools: withBuiltinTools(
         parsed.tools.length
           ? (parsed.tools as Record<string, unknown>[])
           : [{ type: "agent_toolset_20260401" }],
@@ -157,7 +125,7 @@ router.patch("/:id", async (req, params) => {
       const baseTools = parsed.tools !== undefined
         ? parsed.tools
         : ((existing.tools as unknown[] | null) ?? []);
-      updateInput.tools = withKbTools(
+      updateInput.tools = withBuiltinTools(
         baseTools.length ? baseTools : [{ type: "agent_toolset_20260401" }],
       );
       if (parsed.skills !== undefined) updateInput.skills = skillsForAnthropic(parsed.skills);

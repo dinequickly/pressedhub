@@ -18,6 +18,7 @@ import {
 import { refresh, useApi } from "../lib/swr";
 import { Page, StatusPill } from "../components/Page";
 import { humanCron } from "../lib/cron";
+import { ChatStream, LiveActivity } from "../components/ChatEvents";
 
 export function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -47,7 +48,6 @@ export function AgentDetailPage() {
             {agent.emoji || "🤖"}
           </span>
           <span className="text-xl font-semibold tracking-tight">{agent.name}</span>
-          <span className="pill">{agent.model}</span>
         </span>
       }
       subtitle={agent.role || "—"}
@@ -227,7 +227,8 @@ function ChatPanel({ agent }: { agent: Agent }) {
             message creates a session against your first environment.
           </div>
         )}
-        {events.map((e) => <ChatBubble key={e.id} event={e} agent={agent} />)}
+        {events.length > 0 && <ChatStream events={events} />}
+        {run?.session.status === "running" && <LiveActivity events={events} />}
       </div>
 
       {err && <div className="px-6 pb-2 text-rose-600 text-sm">{err}</div>}
@@ -306,8 +307,8 @@ function ResourcePicker({
                 />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm truncate">{f.name}</div>
-                  <div className="text-[10px] text-ink-500 font-mono truncate">
-                    {f.anthropic_file_id ?? "not synced — will sync on send"}
+                  <div className="text-[10px] text-ink-500 truncate">
+                    {f.anthropic_file_id ? "Ready to attach" : "Will finish preparing on send"}
                   </div>
                 </div>
               </label>
@@ -329,12 +330,12 @@ function ResourcePicker({
                   checked={memSelected.has(s.id)}
                   onChange={() => toggleMem(s.id)}
                   disabled={!s.anthropic_id}
-                  title={s.anthropic_id ? undefined : "Not synced to Anthropic — visit /memory to sync."}
+                  title={s.anthropic_id ? undefined : "This memory store still needs a sync from the Memory page."}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm truncate">{s.name}</div>
-                  <div className="text-[10px] text-ink-500 font-mono truncate">
-                    {s.anthropic_id ?? "not synced"}
+                  <div className="text-[10px] text-ink-500 truncate">
+                    {s.anthropic_id ? "Ready to use" : "Needs sync before use"}
                   </div>
                 </div>
               </label>
@@ -361,45 +362,6 @@ function ResourcePicker({
   );
 }
 
-function ChatBubble({ event, agent }: { event: SessionEvent; agent: Agent }) {
-  const isUser = event.event_type === "user.message";
-  const isAssistant = event.event_type.startsWith("agent.message");
-  const text = (() => {
-    const p = event.payload as Record<string, unknown>;
-    const content = (p as { content?: Array<{ type: string; text?: string }> }).content;
-    if (Array.isArray(content)) {
-      return content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
-    }
-    return "";
-  })();
-  if (!isUser && !isAssistant) {
-    // Show non-message events as small system lines.
-    return (
-      <div className="text-[11px] font-mono text-ink-500">
-        · {event.event_type}
-      </div>
-    );
-  }
-  if (!text) return null;
-  return (
-    <div className={`flex gap-2 ${isUser ? "justify-end" : ""}`}>
-      {!isUser && (
-        <div className="size-7 rounded-lg bg-violet-50 grid place-items-center shrink-0 text-sm">
-          {agent.emoji || "🤖"}
-        </div>
-      )}
-      <div
-        className={[
-          "max-w-[80%] rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap",
-          isUser ? "bg-amber-50 text-ink-800" : "bg-violet-50 text-ink-800",
-        ].join(" ")}
-      >
-        {text}
-      </div>
-    </div>
-  );
-}
-
 // -- Config ---------------------------------------------------------------
 
 function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) {
@@ -408,7 +370,6 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
   const [name, setName] = useState(agent.name);
   const [role, setRole] = useState(agent.role);
   const [emoji, setEmoji] = useState(agent.emoji);
-  const [model, setModel] = useState(agent.model);
   const [systemPrompt, setSystemPrompt] = useState(agent.system_prompt);
   const [goalDesc, setGoalDesc] = useState(agent.outcome?.description ?? "");
   const [rubricMd, setRubricMd] = useState(agent.outcome?.rubric_md ?? "");
@@ -435,7 +396,6 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
     name !== agent.name ||
     role !== agent.role ||
     emoji !== agent.emoji ||
-    model !== agent.model ||
     systemPrompt !== agent.system_prompt ||
     goalDesc !== (agent.outcome?.description ?? "") ||
     rubricMd !== (agent.outcome?.rubric_md ?? "") ||
@@ -460,7 +420,7 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
         ? { description: goalDesc, rubric_md: rubricMd, max_iterations: maxIters }
         : null;
       await api.patch<Agent>(`/agents/${agent.id}`, {
-        name, role, emoji, model,
+        name, role, emoji, model: agent.model,
         system_prompt: systemPrompt,
         skills: skillsPayload,
         mcp_servers: agent.mcp_servers,
@@ -499,14 +459,6 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
           <div className="mt-2">
             <label className="label block mb-1">Role</label>
             <input className="input" value={role} onChange={(e) => setRole(e.target.value)} />
-          </div>
-          <div className="mt-2">
-            <label className="label block mb-1">Model</label>
-            <select className="input" value={model} onChange={(e) => setModel(e.target.value)}>
-              <option value="claude-opus-4-7">claude-opus-4-7</option>
-              <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
-              <option value="claude-haiku-4-5-20251001">claude-haiku-4-5-20251001</option>
-            </select>
           </div>
         </Section>
 
@@ -559,7 +511,7 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
           </div>
         </Section>
 
-        <Section icon={<LuBot className="size-4" />} title="System prompt">
+        <Section icon={<LuBot className="size-4" />} title="Instructions">
           <textarea
             className="input font-mono text-xs"
             rows={6}
@@ -591,7 +543,7 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <div className="text-sm font-medium truncate">{s.name}</div>
-                      <StatusPill status={s.type} />
+                      <SkillTypeBadge type={s.type} />
                     </div>
                     {s.description && (
                       <div className="text-[11px] text-ink-500 truncate">{s.description}</div>
@@ -689,6 +641,18 @@ function Section({
       </div>
       {children}
     </section>
+  );
+}
+
+function SkillTypeBadge({ type }: { type: Skill["type"] }) {
+  const label = type === "anthropic" ? "Managed" : "Custom";
+  const cls = type === "anthropic"
+    ? "bg-neutral-100 text-ink-600"
+    : "bg-violet-50 text-violet-700";
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium uppercase tracking-wide ${cls}`}>
+      {label}
+    </span>
   );
 }
 
@@ -1047,4 +1011,3 @@ function guessFreq(cron: string): "hourly" | "daily" | "weekdays" | "weekly" | "
   if (dom === "*" && mon === "*" && /^\d$/.test(dow)) return "weekly";
   return "custom";
 }
-

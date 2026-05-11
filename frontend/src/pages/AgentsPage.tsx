@@ -10,6 +10,8 @@ import { api, type Agent } from "../lib/api";
 import { refresh, useApi } from "../lib/swr";
 import { EmptyState, Modal, Page } from "../components/Page";
 
+const DEFAULT_AGENT_MODEL = "claude-opus-4-7";
+
 export function AgentsPage() {
   const { data } = useApi<{ data: Agent[] }>("/agents");
   const [creating, setCreating] = useState(false);
@@ -18,7 +20,7 @@ export function AgentsPage() {
   return (
     <Page
       title="Agents"
-      subtitle="Reusable agent configurations. Each one mirrors an Anthropic Managed Agent."
+      subtitle="Reusable teammates with saved instructions, skills, and working style."
       actions={
         <button className="btn-primary" onClick={() => setCreating(true)}>
           <LuPlus className="size-4" /> New agent
@@ -29,7 +31,7 @@ export function AgentsPage() {
         {!data?.data?.length ? (
           <EmptyState
             title="No agents yet"
-            body="Creating an agent calls Anthropic POST /v1/agents under the hood."
+            body="Create a teammate with a clear role and strong instructions."
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -48,15 +50,7 @@ export function AgentsPage() {
                     <div className="text-xs text-ink-500 truncate">{a.role || "—"}</div>
                   </div>
                 </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="pill">{a.model}</span>
-                  {a.anthropic_id && (
-                    <span className="pill bg-violet-50 text-violet-600">
-                      {a.anthropic_id.slice(0, 12)}…
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-ink-500 mt-3 line-clamp-3">{a.system_prompt || "(no system prompt)"}</p>
+                <p className="text-xs text-ink-500 mt-3 line-clamp-3">{a.system_prompt || "(no instructions yet)"}</p>
               </button>
             ))}
           </div>
@@ -72,7 +66,6 @@ function CreateAgentModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [emoji, setEmoji] = useState("🤖");
-  const [model, setModel] = useState("claude-opus-4-7");
   const [systemPrompt, setSystemPrompt] = useState("You are a helpful assistant.");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -88,7 +81,7 @@ function CreateAgentModal({ open, onClose }: { open: boolean; onClose: () => voi
               setBusy(true); setErr(null);
               try {
                 await api.post<Agent>("/agents", {
-                  name, role, emoji, model, system_prompt: systemPrompt,
+                  name, role, emoji, model: DEFAULT_AGENT_MODEL, system_prompt: systemPrompt,
                 });
                 refresh("/agents"); onClose();
                 setName(""); setRole(""); setSystemPrompt("You are a helpful assistant.");
@@ -117,23 +110,14 @@ function CreateAgentModal({ open, onClose }: { open: boolean; onClose: () => voi
           <input className="input" value={role} onChange={(e) => setRole(e.target.value)} placeholder="Triage, Researcher, …" />
         </div>
         <div>
-          <label className="label block mb-1">Model</label>
-          <select className="input" value={model} onChange={(e) => setModel(e.target.value)}>
-            <option value="claude-opus-4-7">claude-opus-4-7</option>
-            <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
-            <option value="claude-haiku-4-5-20251001">claude-haiku-4-5-20251001</option>
-          </select>
-        </div>
-        <div>
-          <label className="label block mb-1">System prompt</label>
+          <label className="label block mb-1">Instructions</label>
           <textarea className="input font-mono text-xs" rows={5} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} />
         </div>
         {err && <div className="text-rose-600 text-sm">{err}</div>}
         <div className="text-[11px] text-ink-500">
-          Creates an Anthropic agent under the hood — needs <code>ANTHROPIC_API_KEY</code>.
+          This uses the workspace agent backend, so creation will only work when the server connection is configured.
         </div>
       </div>
     </Modal>
   );
 }
-

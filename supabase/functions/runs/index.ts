@@ -20,6 +20,11 @@ import {
   postToolResult,
 } from "../_shared/kb_tools.ts";
 import {
+  dispatchRosterStatusTool,
+  extractRosterStatusToolUses,
+  postRosterStatusToolResult,
+} from "../_shared/roster_status_tools.ts";
+import {
   dispatchImageTool,
   extractImageToolUses,
   postImageToolResult,
@@ -80,6 +85,8 @@ router.get("/:id", async (req, params) => {
       catch (err) { console.warn("[runs] refreshFromAnthropic failed:", err); }
       try { await drainKbToolCalls(user.db, user.id, session.id, anthropicId); }
       catch (err) { console.warn("[runs] drainKbToolCalls failed:", err); }
+      try { await drainRosterStatusToolCalls(user.db, session.id, anthropicId); }
+      catch (err) { console.warn("[runs] drainRosterStatusToolCalls failed:", err); }
       try { await drainImageToolCalls(user.db, user.id, session.id, anthropicId); }
       catch (err) { console.warn("[runs] drainImageToolCalls failed:", err); }
     };
@@ -393,6 +400,78 @@ async function drainImageToolCalls(
       console.warn(`[runs] image dispatch ${ref.name} failed:`, err);
       try {
         await postImageToolResult(
+          anthropicSessionId,
+          ref.tool_use_id,
+          `[ERROR] ${(err as Error).message}`,
+        );
+      } catch (_) { /* ignore */ }
+    }
+  }));
+}
+
+// Roster-status tool drain. Lets any agent explicitly author the note shown on
+// /roster instead of relying on us to infer intent from freeform chat text.
+async function drainRosterStatusToolCalls(
+  userDb: SupabaseClient,
+  localSessionId: string,
+  anthropicSessionId: string,
+): Promise<void> {
+  const { data: events } = await userDb
+    .from("session_events")
+    .select("event_type,payload,created_at")
+    .eq("session_id", localSessionId);
+  if (!events?.length) return;
+
+  const STALE_MS = 30 * 1000;
+  const now = Date.now();
+  const answered = new Set<string>();
+  const inFlight = new Set<string>();
+  for (const e of events) {
+    const p = e.payload as Record<string, unknown> | null;
+    if (!p) continue;
+    if (p.type === "user.custom_tool_result" && typeof p.custom_tool_use_id === "string") {
+      answered.add(p.custom_tool_use_id);
+    }
+    if (e.event_type === "pressed.roster_status_dispatch_started" && typeof p.tool_use_id === "string") {
+      const createdAt = e.created_at ? new Date(e.created_at as string).getTime() : 0;
+      if (now - createdAt < STALE_MS) inFlight.add(p.tool_use_id);
+    }
+  }
+
+  const pending: ReturnType<typeof extractRosterStatusToolUses> = [];
+  const seenIds = new Set<string>();
+  for (const e of events) {
+    for (const ref of extractRosterStatusToolUses(e.payload)) {
+      if (answered.has(ref.tool_use_id)) continue;
+      if (inFlight.has(ref.tool_use_id)) continue;
+      if (seenIds.has(ref.tool_use_id)) continue;
+      seenIds.add(ref.tool_use_id);
+      pending.push(ref);
+    }
+  }
+  if (pending.length === 0) return;
+
+  const sc = serviceClient();
+  await sc.from("session_events").insert(
+    pending.map((ref) => ({
+      session_id: localSessionId,
+      event_type: "pressed.roster_status_dispatch_started",
+      payload: { tool_use_id: ref.tool_use_id, name: ref.name },
+      processed_at: new Date().toISOString(),
+    })),
+  );
+
+  await Promise.all(pending.map(async (ref) => {
+    try {
+      const text = await dispatchRosterStatusTool(ref, {
+        userDb,
+        localSessionId,
+      });
+      await postRosterStatusToolResult(anthropicSessionId, ref.tool_use_id, text);
+    } catch (err) {
+      console.warn(`[runs] dispatch ${ref.name} failed:`, err);
+      try {
+        await postRosterStatusToolResult(
           anthropicSessionId,
           ref.tool_use_id,
           `[ERROR] ${(err as Error).message}`,

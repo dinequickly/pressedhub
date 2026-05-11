@@ -11,15 +11,15 @@ export function Page({
   children: ReactNode;
 }) {
   return (
-    <div className="h-full flex flex-col">
-      <div className="px-6 pt-5 pb-4 border-b border-neutral-200 flex items-start justify-between gap-4">
-        <div>
+    <div className="h-full flex flex-col bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.95),_rgba(245,245,244,0.92)_42%,_rgba(238,238,236,0.88))]">
+      <div className="px-6 pt-6 pb-5 border-b border-neutral-200/80 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/70 flex items-start justify-between gap-4 shadow-[0_1px_0_rgba(255,255,255,0.7)]">
+        <div className="min-w-0">
           {typeof title === "string"
-            ? <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-            : <div className="text-xl font-semibold tracking-tight">{title}</div>}
-          {subtitle && <p className="text-sm text-ink-500 mt-0.5">{subtitle}</p>}
+            ? <h1 className="text-[1.45rem] font-semibold tracking-tight text-ink-950">{title}</h1>
+            : <div className="text-[1.45rem] font-semibold tracking-tight text-ink-950">{title}</div>}
+          {subtitle && <p className="text-sm text-ink-500 mt-1 max-w-2xl leading-relaxed">{subtitle}</p>}
         </div>
-        {actions && <div className="flex items-center gap-2">{actions}</div>}
+        {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
       </div>
       <div className="flex-1 overflow-y-auto">{children}</div>
     </div>
@@ -31,11 +31,11 @@ export function EmptyState({
 }: { title: string; body?: string; action?: ReactNode }) {
   return (
     <div className="p-10 text-center">
-      <div className="mx-auto size-10 rounded-xl bg-violet-50 grid place-items-center text-violet-500 mb-3">
+      <div className="mx-auto size-10 rounded-xl bg-black text-white grid place-items-center shadow-soft mb-3">
         ○
       </div>
-      <div className="font-medium">{title}</div>
-      {body && <div className="text-sm text-ink-500 mt-1">{body}</div>}
+      <div className="font-medium text-ink-900">{title}</div>
+      {body && <div className="text-sm text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">{body}</div>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   );

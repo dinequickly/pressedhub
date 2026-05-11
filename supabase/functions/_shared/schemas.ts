@@ -213,6 +213,10 @@ export const SessionSendEventSchema = z.object({
   ])),
 });
 
+export const SessionAttachKbSchema = z.object({
+  kb_file_id: z.string().uuid(),
+});
+
 // -- Skills --------------------------------------------------------------
 
 export const SkillCreateSchema = z.object({

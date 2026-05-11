@@ -135,6 +135,7 @@ function RosterTile({
   const tilt = tiltFor(entry.id);
   const tape = tapeFor(entry.id);
   const stamp = STAMP[status.color];
+  const stampLabel = status.label ?? stamp.label;
 
   async function open() {
     if (opening) return;
@@ -220,7 +221,7 @@ function RosterTile({
           boxShadow: `inset 0 0 0 1px ${stamp.color}22`,
         }}
       >
-        {entry.status === "paused" ? "PAUSED" : stamp.label}
+        {entry.status === "paused" ? "PAUSED" : stampLabel}
       </span>
 
       {/* Header: agent name + the job this note is about */}
@@ -357,10 +358,18 @@ function IconBtn({
   );
 }
 
-function derive(entry: RosterEntry): { message: string; color: Tone } {
+function derive(entry: RosterEntry): { message: string; color: Tone; label?: string | null } {
   if (entry.status === "paused") return { message: "On break.", color: "idle" };
   const ls = entry.last_session;
   if (!ls) return { message: "Pinned and waiting for the first shift.", color: "idle" };
+  const roster = ls.roster_status;
+  if (roster?.summary) {
+    return {
+      message: snippet(roster.summary) ?? roster.summary,
+      color: roster.tone,
+      label: snippet(roster.label, 18),
+    };
+  }
   const said = snippet(ls.latest_message);
   const thought = snippet(ls.latest_thinking);
   if (ls.status === "running" || ls.status === "rescheduling") {
@@ -401,4 +410,3 @@ function relative(iso: string): string {
   if (hr < 24) return `${sign}${hr}h${tail}`;
   return `${sign}${day}d${tail}`;
 }
-

@@ -83,7 +83,7 @@ export function DirectorChat({
               <>
                 <div className="text-sm text-ink-700 font-medium">Set up the Director</div>
                 <div className="text-xs text-ink-500">
-                  One-time: creates the Image Studio Director agent and a default environment so this app can talk to Claude.
+                  One-time: creates the Image Studio Director agent and a default environment so this app can start directing boards.
                 </div>
                 <button
                   className="btn-primary"

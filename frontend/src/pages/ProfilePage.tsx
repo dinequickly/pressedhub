@@ -184,7 +184,7 @@ function ConnectionsSection() {
         <div>
           <div className="font-medium">Connections</div>
           <div className="text-xs text-ink-500">
-            Authorize external services. Credentials are stored in Anthropic Vault.
+            Authorize external services so agents can work with your tools securely.
           </div>
         </div>
         <button className="btn-primary" disabled={busy} onClick={connectSlack}>

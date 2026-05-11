@@ -12,7 +12,7 @@ import { api, type Agent, type Environment, type RunOutput, type Session, type S
 import { refresh, useApi } from "../lib/swr";
 import { EmptyState, Modal, Page, StatusPill } from "../components/Page";
 import { OutputPreview } from "../components/OutputPreview";
-import { EventRow } from "../components/ChatEvents";
+import { ChatStream, LiveActivity } from "../components/ChatEvents";
 import { humanizeBytes } from "../lib/format";
 import { FN_URL, supabase } from "../lib/supabase";
 
@@ -30,7 +30,7 @@ export function RunsPage() {
   return (
     <Page
       title="Runs"
-      subtitle="Live sessions and their event timelines"
+      subtitle="Live work in progress, with outputs and activity in one place."
       actions={
         <button className="btn-primary" onClick={() => setCreating(true)}>
           <LuPlus className="size-4" /> Start session
@@ -150,16 +150,16 @@ function RunDetail({ sessionId }: { sessionId: string }) {
         <h2 className="text-lg font-semibold">{session.title ?? "Untitled"}</h2>
         <StatusPill status={session.status} />
       </div>
-      <div className="grid grid-cols-2 gap-3 text-xs text-ink-500 font-mono">
+      <div className="grid grid-cols-2 gap-3 text-xs text-ink-500">
         <div>started {new Date(session.started_at).toLocaleString()}</div>
         <div>{session.finished_at ? `finished ${new Date(session.finished_at).toLocaleString()}` : "in progress"}</div>
-        <div>iterations: {session.iteration_count}</div>
-        <div>tokens: {(session.usage?.input_tokens ?? 0) + (session.usage?.output_tokens ?? 0)}</div>
+        <div>{events.length} updates recorded</div>
+        <div>{outputs.length} file{outputs.length === 1 ? "" : "s"} produced</div>
       </div>
 
       <div className="flex items-center gap-2">
         <button className="btn-ghost" onClick={attachStream} disabled={streaming || session.status === "terminated"}>
-          <LuRotateCcw className="size-3.5" /> {streaming ? "Streaming…" : "Tail stream"}
+          <LuRotateCcw className="size-3.5" /> {streaming ? "Refreshing…" : "Refresh live"}
         </button>
         <button
           className="btn-danger"
@@ -173,16 +173,19 @@ function RunDetail({ sessionId }: { sessionId: string }) {
         </button>
       </div>
 
-      <div ref={eventsRef} className="space-y-2 max-h-[55vh] overflow-y-auto">
+      <div ref={eventsRef} className="space-y-3 max-h-[55vh] overflow-y-auto rounded-[28px] border border-neutral-200/80 bg-neutral-100/80 p-4">
         {events.length === 0 ? (
           <div className="text-sm text-ink-500">No events yet.</div>
-        ) : events.map((e) => <EventRow key={e.id} event={e} />)}
+        ) : (
+          <ChatStream events={events} />
+        )}
+        {session.status === "running" && <LiveActivity events={events} />}
       </div>
 
       <div className="flex gap-2 sticky bottom-0 bg-white pt-3 border-t border-neutral-200">
         <input
           className="input"
-          placeholder="Send a user.message…"
+          placeholder="Send a follow-up…"
           value={message} onChange={(e) => setMessage(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") send(); }}
         />

@@ -10,7 +10,7 @@ import {
 } from "react-icons/lu";
 import { api, type Skill } from "../lib/api";
 import { refresh, useApi } from "../lib/swr";
-import { Page, StatusPill } from "../components/Page";
+import { Page } from "../components/Page";
 import { MarkdownEditor } from "../components/MarkdownEditor";
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
@@ -28,7 +28,7 @@ export function SkillBuilderPage() {
   const { data: existing } = useApi<Skill>(id ? `/skills/${id}` : null);
 
   const [messages, setMessages] = useState<ChatMsg[]>([
-    { role: "assistant", content: "I can draft a skill from a description, then iterate with you. What should it do?" },
+    { role: "assistant", content: "Describe the skill and the draft will stay in sync as you refine it." },
   ]);
   const [input, setInput] = useState("");
   const [drafting, setDrafting] = useState(false);
@@ -207,8 +207,8 @@ function ConversationPane({
   return (
     <div className="col-span-4 border-r border-neutral-200 flex flex-col min-h-0">
       <div className="px-5 pt-4 pb-3 border-b border-neutral-200">
-        <div className="font-medium text-sm">Conversation</div>
-        <div className="text-xs text-ink-500">Describe what the skill should do, then refine.</div>
+        <div className="font-medium text-sm">Brief</div>
+        <div className="text-xs text-ink-500">Describe what the skill should do and the draft will update on the right.</div>
       </div>
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
         {messages.map((m, i) => <Bubble key={i} m={m} />)}
@@ -264,18 +264,19 @@ function ConversationPane({
 
 function Bubble({ m }: { m: ChatMsg }) {
   const isUser = m.role === "user";
+  const text = isUser ? m.content : "Draft refreshed";
   return (
     <div className={`flex gap-2 ${isUser ? "justify-end" : ""}`}>
       {!isUser && (
-        <div className="size-7 rounded-lg bg-violet-50 grid place-items-center shrink-0 text-violet-500">
+        <div className="size-7 rounded-lg bg-neutral-900 grid place-items-center shrink-0 text-white">
           <LuSparkles className="size-4" />
         </div>
       )}
       <div className={[
         "max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap",
-        isUser ? "bg-amber-50 text-ink-800" : "bg-neutral-100 text-ink-800",
+        isUser ? "bg-amber-50 text-ink-800" : "bg-neutral-100 text-ink-700",
       ].join(" ")}>
-        {m.content}
+        {text}
       </div>
     </div>
   );
@@ -290,14 +291,15 @@ function AnthropicSkillView({ skill, onBack }: { skill: Skill; onBack: () => voi
             <LuArrowLeft className="size-4" />
           </button>
           <span className="text-xl font-semibold tracking-tight">{skill.name}</span>
-          <StatusPill status="anthropic" />
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium uppercase tracking-wide bg-neutral-100 text-ink-600">
+            Managed
+          </span>
         </span>
       }
     >
       <div className="p-8 max-w-2xl">
         <p className="text-sm text-ink-500 mb-6">
-          Prebuilt skill maintained by Anthropic. Reference it by id when configuring an
-          agent — the SKILL.md isn&apos;t editable here.
+          This is a managed library skill. You can reference it from agents, but it is read-only here.
         </p>
         <div className="card p-5 space-y-4">
           <div>
@@ -305,12 +307,8 @@ function AnthropicSkillView({ skill, onBack }: { skill: Skill; onBack: () => voi
             <div className="text-sm">{skill.description || <span className="text-ink-500">—</span>}</div>
           </div>
           <div>
-            <div className="label mb-1">Skill id</div>
-            <div className="font-mono text-xs">{skill.anthropic_skill_id}</div>
-          </div>
-          <div>
-            <div className="label mb-1">Version</div>
-            <div className="font-mono text-xs">{skill.version}</div>
+            <div className="label mb-1">Availability</div>
+            <div className="text-sm text-ink-600">Ready to attach from the skills picker.</div>
           </div>
         </div>
       </div>
@@ -366,8 +364,7 @@ function TestRunPane({ contentMd }: { contentMd: string }) {
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-8 py-6 max-w-3xl mx-auto w-full space-y-4">
       <div className="text-sm text-ink-500">
-        Sends a one-shot prompt to Claude with this SKILL.md as the system prompt.
-        It does not create an Anthropic skill or session.
+        Runs a quick draft check with this skill so you can verify the setup before saving.
       </div>
       <textarea
         className="input resize-none"
@@ -383,7 +380,15 @@ function TestRunPane({ contentMd }: { contentMd: string }) {
       </div>
       {err && <div className="text-rose-600 text-sm">{err}</div>}
       {output !== null && (
-        <div className="card p-4 text-sm whitespace-pre-wrap">{output}</div>
+        <div className="card p-4 space-y-2">
+          <div className="text-sm font-medium text-ink-900">Draft check complete</div>
+          <div className="text-sm text-ink-500">
+            The skill responded successfully. Raw model output is hidden here so the builder stays focused on the draft itself.
+          </div>
+          <div className="text-xs text-ink-400 font-mono">
+            {output.length} characters returned
+          </div>
+        </div>
       )}
     </div>
   );

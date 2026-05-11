@@ -11,6 +11,7 @@ import {
   AnthropicSessions,
   type UserEvent,
 } from "./anthropic.ts";
+import { syncAgentBuiltins } from "./agent_config.ts";
 import type { SupabaseClient } from "./supabase.ts";
 
 export type BootstrapInput = {
@@ -34,6 +35,8 @@ export async function bootstrapSession(
   sc: SupabaseClient,
   input: BootstrapInput,
 ): Promise<{ localId: string; anthropicId: string }> {
+  await syncAgentBuiltins(sc, input.agentId);
+
   const { data: agent } = await sc
     .from("agents").select("anthropic_id").eq("id", input.agentId).maybeSingle();
   if (!agent?.anthropic_id) throw new Error("agent has no anthropic_id");

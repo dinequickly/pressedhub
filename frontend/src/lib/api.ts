@@ -271,6 +271,16 @@ export type RosterEntry = {
       // Most recent summarized thinking text from this session. Used to
       // announce what the agent is reasoning about while it's still running.
       latest_thinking?: string | null;
+      // Explicit roster-card status set by the agent through the built-in
+      // set_roster_status tool. Preferred over heuristics when present.
+      roster_status?: {
+        tone: "running" | "warn" | "ok" | "idle";
+        label?: string | null;
+        summary: string;
+        cta?: "open_chat" | "open_files" | "none" | null;
+        file_name?: string | null;
+        updated_at?: string | null;
+      } | null;
     }
     | null;
 };

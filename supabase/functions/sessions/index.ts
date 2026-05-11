@@ -14,7 +14,7 @@ import { wrap } from "../_shared/cors.ts";
 import { Router, readJson } from "../_shared/router.ts";
 import { requireUser } from "../_shared/auth.ts";
 import { BadRequest, NotFound, noContent, ok, Upstream } from "../_shared/errors.ts";
-import { SessionSendEventSchema, SessionStartSchema } from "../_shared/schemas.ts";
+import { SessionAttachKbSchema, SessionSendEventSchema, SessionStartSchema } from "../_shared/schemas.ts";
 import {
   AnthropicFiles,
   AnthropicSessionEvents,
@@ -22,6 +22,8 @@ import {
   type SessionResource,
   type UserEvent,
 } from "../_shared/anthropic.ts";
+import { syncAgentBuiltins } from "../_shared/agent_config.ts";
+import { attachKbFileToSession } from "../_shared/kb_tools.ts";
 // Tool dispatch lives in /runs/:id (poll path) so a long generation doesn't
 // pin the SSE stream's worker. The stream here just forwards + persists.
 import { ENV } from "../_shared/env.ts";
@@ -54,6 +56,7 @@ router.post("/", async (req) => {
   const user = await requireUser(req);
   const body = await readJson(req);
   const parsed = SessionStartSchema.parse(body);
+  await syncAgentBuiltins(serviceClient(), parsed.agent_id);
 
   // Resolve the Anthropic ids for the agent + environment.
   const { data: agent } = await user.db.from("agents")
@@ -257,6 +260,31 @@ router.post("/:id/events", async (req, params) => {
   // store it once. Inserting here previously caused duplicate user.message
   // rows because the dedup key (anthropic_event_id) was missing.
   return ok({ accepted: parsed.events.length });
+});
+
+router.post("/:id/attachments/kb", async (req, params) => {
+  const user = await requireUser(req);
+  const parsed = SessionAttachKbSchema.parse(await readJson(req));
+  const { data: session } = await user.db.from("sessions").select("anthropic_id").eq(
+    "id",
+    params.id,
+  ).maybeSingle();
+  if (!session?.anthropic_id) throw new NotFound("Session not found");
+
+  const result = await attachKbFileToSession({
+    userDb: user.db,
+    anthropicSessionId: session.anthropic_id,
+  }, parsed.kb_file_id);
+
+  await serviceClient().from("session_events").insert({
+    session_id: params.id,
+    anthropic_event_id: null,
+    event_type: "pressed.kb_attached",
+    payload: result,
+    processed_at: new Date().toISOString(),
+  });
+
+  return ok(result);
 });
 
 router.post("/:id/interrupt", async (req, params) => {

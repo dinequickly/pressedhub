@@ -15,7 +15,7 @@ export function EnvironmentsPage() {
   return (
     <Page
       title="Environments"
-      subtitle="Containers your agents run inside. Maps 1:1 to Anthropic environments."
+      subtitle="Execution spaces for your agents, including network rules and optional packages."
       actions={
         <button className="btn-primary" onClick={() => setCreating(true)}>
           <LuPlus className="size-4" /> New environment
@@ -35,8 +35,8 @@ export function EnvironmentsPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="font-medium truncate">{e.name}</div>
-                    <div className="text-[11px] text-ink-500 font-mono truncate">
-                      {e.anthropic_id ?? "no anthropic id"}
+                    <div className="text-[11px] text-ink-500 truncate">
+                      {summarizeEnvironment(e)}
                     </div>
                   </div>
                   <button
@@ -50,9 +50,11 @@ export function EnvironmentsPage() {
                     <LuTrash className="size-3.5" />
                   </button>
                 </div>
-                <pre className="rounded-lg bg-neutral-50 mt-3 p-2 text-[11px] font-mono whitespace-pre-wrap">
-                  {JSON.stringify(e.config, null, 2)}
-                </pre>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {environmentBadges(e).map((badge) => (
+                    <span key={badge} className="pill">{badge}</span>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
@@ -62,6 +64,26 @@ export function EnvironmentsPage() {
       <CreateEnvModal open={creating} onClose={() => setCreating(false)} />
     </Page>
   );
+}
+
+function summarizeEnvironment(env: Environment): string {
+  const networking = ((env.config as Record<string, unknown>)?.networking as Record<string, unknown> | undefined)?.type;
+  if (networking === "limited") return "Limited network access with an allowlist";
+  if (networking === "unrestricted") return "Open network access for research and integrations";
+  return "Ready for agent work";
+}
+
+function environmentBadges(env: Environment): string[] {
+  const config = (env.config as Record<string, unknown>) ?? {};
+  const networking = (config.networking as Record<string, unknown> | undefined)?.type;
+  const packages = (config.packages as Record<string, unknown> | undefined) ?? {};
+  const pipCount = Array.isArray(packages.pip) ? packages.pip.length : 0;
+  const npmCount = Array.isArray(packages.npm) ? packages.npm.length : 0;
+  return [
+    networking === "limited" ? "Allowlist networking" : "Open networking",
+    pipCount > 0 ? `${pipCount} pip package${pipCount === 1 ? "" : "s"}` : "No pip extras",
+    npmCount > 0 ? `${npmCount} npm package${npmCount === 1 ? "" : "s"}` : "No npm extras",
+  ];
 }
 
 function CreateEnvModal({ open, onClose }: { open: boolean; onClose: () => void }) {

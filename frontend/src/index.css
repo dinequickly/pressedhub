@@ -7,30 +7,31 @@
   body {
     font-feature-settings: "cv11", "ss01", "ss03";
     letter-spacing: -0.01em;
+    @apply bg-stone-100 text-ink-900 antialiased;
   }
 }
 
 @layer components {
   .card {
-    @apply bg-white border border-neutral-200 rounded-xl shadow-soft;
+    @apply bg-white/90 backdrop-blur border border-neutral-200/90 rounded-2xl shadow-[0_16px_40px_rgba(15,23,42,0.06)];
   }
   .pill {
-    @apply inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-mono bg-neutral-100 text-ink-500;
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-ink-500;
   }
   .btn {
-    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors;
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium transition-all duration-200;
   }
   .btn-primary {
-    @apply btn bg-ink-900 text-white hover:bg-ink-700;
+    @apply btn bg-black text-white shadow-[0_10px_20px_rgba(0,0,0,0.12)] hover:bg-neutral-800;
   }
   .btn-ghost {
-    @apply btn text-ink-700 hover:bg-neutral-100;
+    @apply btn text-ink-700 hover:bg-white hover:shadow-soft;
   }
   .btn-danger {
     @apply btn bg-rose-50 text-rose-600 hover:bg-rose-100;
   }
   .input {
-    @apply w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white text-sm placeholder:text-ink-300 focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100;
+    @apply w-full px-3 py-2 rounded-xl border border-neutral-200 bg-white/95 text-sm placeholder:text-ink-300 focus:outline-none focus:border-neutral-400 focus:ring-4 focus:ring-black/5;
   }
   .label {
     @apply text-xs font-medium text-ink-500 uppercase tracking-wide;

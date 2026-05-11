@@ -102,14 +102,34 @@ router.get("/roster", async (req) => {
       .from("session_events")
       .select("session_id,event_type,payload,processed_at")
       .in("session_id", sessionIds)
-      .or("event_type.like.agent.message%,event_type.ilike.%thinking%")
+      .or("event_type.like.agent.message%,event_type.ilike.%thinking%,event_type.eq.pressed.roster_status_set")
       .order("processed_at", { ascending: false });
     const latestMessage = new Map<string, string>();
     const latestThinking = new Map<string, string>();
+    const latestRosterStatus = new Map<string, Record<string, unknown>>();
     for (const e of (events ?? []) as Array<Record<string, any>>) {
       const sid = e.session_id as string;
       const t = (e.event_type as string) ?? "";
       const p = e.payload ?? {};
+      if (t === "pressed.roster_status_set") {
+        if (
+          !latestRosterStatus.has(sid) &&
+          typeof p.summary === "string" &&
+          typeof p.tone === "string"
+        ) {
+          latestRosterStatus.set(sid, {
+            tone: p.tone,
+            label: typeof p.label === "string" ? p.label : null,
+            summary: p.summary,
+            cta: typeof p.cta === "string" ? p.cta : null,
+            file_name: typeof p.file_name === "string" ? p.file_name : null,
+            updated_at: typeof p.updated_at === "string"
+              ? p.updated_at
+              : (e.processed_at as string | null),
+          });
+        }
+        continue;
+      }
       const blocks = Array.isArray(p.content) ? p.content : [];
       let text = "";
       let thinking = "";
@@ -132,6 +152,7 @@ router.get("/roster", async (req) => {
       if (!sid || !row.last_session) continue;
       if (latestMessage.has(sid)) row.last_session.latest_message = latestMessage.get(sid);
       if (latestThinking.has(sid)) row.last_session.latest_thinking = latestThinking.get(sid);
+      if (latestRosterStatus.has(sid)) row.last_session.roster_status = latestRosterStatus.get(sid);
     }
   }
   return ok({ data: rows });

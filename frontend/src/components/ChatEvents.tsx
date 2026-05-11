@@ -10,8 +10,8 @@ import {
   LuBan, LuFileText, LuBrain,
   LuFilePlus, LuPencil, LuFolderSearch, LuSearch, LuGlobe,
   LuBookOpen, LuLibrary, LuPaperclip, LuPlug, LuPuzzle,
-  LuCircleAlert, LuCircleCheck, LuTriangleAlert, LuTarget, LuArchive,
-  LuZap, LuCpu, LuShare2, LuCitrus, LuCopy, LuRotateCcw, LuCheck,
+  LuTriangleAlert, LuTarget, LuArchive,
+  LuZap, LuShare2, LuCitrus, LuCopy, LuRotateCcw, LuCheck, LuCpu,
   LuChevronDown, LuChevronRight, LuFile, LuPresentation,
 } from "react-icons/lu";
 import type { SessionEvent } from "../lib/api";
@@ -54,6 +54,12 @@ const TOOL_META: Record<string, ToolMeta> = {
   kb_list:    { icon: LuBookOpen,     tint: "violet",  verb: "browsed KB",   arg: (i) => str(i.folder_id) ?? "all files" },
   kb_search:  { icon: LuLibrary,      tint: "violet",  verb: "searched KB",  arg: (i) => str(i.query) },
   kb_attach:  { icon: LuPaperclip,    tint: "violet",  verb: "attached",     arg: (i) => str(i.kb_file_id) },
+  set_roster_status: {
+    icon: LuMessageSquare,
+    tint: "amber",
+    verb: "updated roster",
+    arg: (i) => str(i.label) ?? str(i.summary) ?? str(i.tone),
+  },
 };
 
 function str(v: unknown): string | null {
@@ -146,79 +152,24 @@ function Caption({ tint, label, time }: { tint: Tint; label: string; time: strin
 // expands to reveal the tool's result. Mimics ai-elements' Tool primitive —
 // no big bubble, just a colored icon + mono summary that you can drill into.
 function ToolStep({
-  Icon, tint, label, verb, arg, result,
+  Icon, tint, label, verb, arg,
 }: {
   Icon: IconType;
   tint: Tint;
   label: string;
   verb: string;
   arg: string | null;
-  result: { text: string; isError: boolean } | null;
 }) {
-  const [open, setOpen] = useState(false);
-  const hasBody = !!(result && result.text);
   const cls = TINT[tint];
   return (
     <div className="text-sm">
-      <button
-        onClick={hasBody ? () => setOpen((v) => !v) : undefined}
-        disabled={!hasBody}
-        className="w-full flex items-center gap-2 text-left disabled:cursor-default"
-      >
+      <div className="w-full flex items-center gap-2 text-left rounded-2xl border border-neutral-200/80 bg-white/90 px-3 py-2">
         <Icon className={`size-3.5 ${cls.icon} shrink-0`} />
         <span className={`text-[11px] font-medium font-mono uppercase tracking-wider ${cls.label} shrink-0`}>{label}</span>
         <span className="text-ink-500 shrink-0">{verb}</span>
         {arg && <span className="text-ink-700 truncate font-mono text-[13px]">{arg}</span>}
-        {hasBody && (
-          <span className="ml-auto text-ink-400 text-[11px] shrink-0">
-            {open ? "hide" : result?.isError ? "view error" : "view output"}
-          </span>
-        )}
-      </button>
-      {open && result && (
-        <div className="mt-1 ml-5">
-          <ResultBlock text={result.text} isError={result.isError} />
-        </div>
-      )}
+      </div>
     </div>
-  );
-}
-
-function ThinkingStep({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="text-sm">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 text-left"
-      >
-        <LuBrain className="size-3.5 text-indigo-500 shrink-0" />
-        <span className="text-[11px] font-medium font-mono uppercase tracking-wider text-indigo-700">
-          Thought
-        </span>
-        <span className="text-ink-400 text-[11px]">{open ? "hide" : "view"}</span>
-      </button>
-      {open && (
-        <div className="mt-1 ml-5 text-sm italic text-indigo-900 whitespace-pre-wrap bg-indigo-50/60 border-l-2 border-indigo-300 pl-3 py-1.5 rounded-r-md max-h-72 overflow-auto">
-          {text}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ResultBlock({ text, isError }: { text: string; isError: boolean }) {
-  return (
-    <pre
-      className={[
-        "text-xs font-mono whitespace-pre-wrap p-2.5 rounded-md border max-h-60 overflow-auto",
-        isError
-          ? "text-rose-700 bg-rose-50 border-rose-200"
-          : "text-ink-700 bg-neutral-50 border-neutral-200",
-      ].join(" ")}
-    >
-      {text.slice(0, 4000)}
-    </pre>
   );
 }
 
@@ -270,6 +221,11 @@ const NOISE_PREFIXES = [
   "session.thread_",          // multiagent sub-threads
   "agent.thread_status_",
   "agent.thread_message_",
+  "pressed.kb_dispatch_started",
+  "pressed.image_dispatch_started",
+  "pressed.roster_status_dispatch_started",
+  "pressed.kb_attached",
+  "pressed.roster_status_set",
 ];
 
 export function isNoiseEvent(event: SessionEvent): boolean {
@@ -327,7 +283,7 @@ export function EventRow({
 
   const { thinking, text: msgText } = extractContent(event);
   if (thinking && (t.includes("thinking") || !msgText)) {
-    return <ThinkingStep text={thinking} />;
+    return null;
   }
 
   if (t === "agent.message" && msgText) {
@@ -368,30 +324,19 @@ export function EventRow({
     const server = isMcp && typeof p.server_name === "string" ? p.server_name : null;
     const label = server ? `${server} · ${name}` : name;
 
-    const result = resultEvent
-      ? extractResult((resultEvent.payload ?? {}) as Record<string, unknown>)
-      : null;
-
     return <ToolStep
       Icon={Icon}
       tint={tint}
       label={label}
       verb={verb}
       arg={arg}
-      result={result}
     />;
   }
 
   // Standalone result rows only render when they couldn't be paired with a
   // tool_use upstream (rare — usually means the use was filtered or absent).
   if (t === "agent.tool_result" || t === "agent.mcp_tool_result" || t === "user.custom_tool_result") {
-    const { text, isError } = extractResult(p);
-    if (!text) return null;
-    return (
-      <div className="pl-9">
-        <ResultBlock text={text} isError={isError} />
-      </div>
-    );
+    return null;
   }
 
   if (t === "agent.thread_context_compacted") {
@@ -484,10 +429,7 @@ export function EventRow({
     <div className="flex items-start gap-2.5">
       <Bubble icon={LuSparkles} tint="neutral" />
       <div className="min-w-0 flex-1">
-        <Caption tint="neutral" label={t} time={event.processed_at} />
-        <pre className="text-[11px] text-ink-500 font-mono whitespace-pre-wrap mt-0.5 line-clamp-3">
-          {JSON.stringify(event.payload, null, 2)}
-        </pre>
+        <Caption tint="neutral" label="activity updated" time={event.processed_at} />
       </div>
     </div>
   );
@@ -551,10 +493,7 @@ function deriveActivity(events: SessionEvent[]): ActivityInfo | null {
     const p = (e.payload ?? {}) as Record<string, unknown>;
 
     if (t === "agent.thinking" || (t.includes("thinking") && !t.includes("tool"))) {
-      const { thinking } = extractContent(e);
-      if (thinking) {
-        return { icon: LuBrain, tint: "indigo", title: "Thinking", detail: firstSentence(thinking, 160) };
-      }
+      return { icon: LuBrain, tint: "indigo", title: "Reviewing the request", detail: null };
     }
 
     if (t === "agent.tool_use" || t === "agent.custom_tool_use" || t === "agent.mcp_tool_use") {
@@ -679,7 +618,6 @@ type ToolStepData = {
 type ChatItem =
   | { kind: "user"; event: SessionEvent }
   | { kind: "assistant"; event: SessionEvent; text: string }
-  | { kind: "thinking"; eventId: string; text: string }
   | { kind: "tool-group"; key: string; category: ToolCategory; steps: ToolStepData[] }
   | { kind: "fallback"; event: SessionEvent };
 
@@ -750,7 +688,6 @@ export function buildChatItems(events: SessionEvent[]): ChatItem[] {
 
     const { thinking, text: msgText } = extractContent(e);
     if (thinking && (t.includes("thinking") || !msgText)) {
-      items.push({ kind: "thinking", eventId: e.id, text: thinking });
       continue;
     }
     if (t === "agent.message" && msgText) {
@@ -820,19 +757,6 @@ function FilePathChip({
   );
 }
 
-function ThinkingTrace({ text }: { text: string }) {
-  // Always visible. Mirrors how ChatGPT / Claude show the reasoning trace: a
-  // muted italic block beneath the icon, flowing line-by-line.
-  return (
-    <div className="flex items-start gap-2.5">
-      <LuBrain className="size-4 text-ink-400 shrink-0 mt-0.5" />
-      <div className="text-sm text-ink-500 italic whitespace-pre-wrap leading-relaxed">
-        {text}
-      </div>
-    </div>
-  );
-}
-
 function ToolGroup({
   category, steps, onOpenFile,
 }: {
@@ -873,7 +797,6 @@ function ToolDetail({
   category: ToolCategory;
   onOpenFile?: (path: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const tm = TOOL_META[step.name];
   const verb = tm?.verb ?? "called";
   const arg = tm?.arg(step.input) ?? null;
@@ -881,26 +804,20 @@ function ToolDetail({
   const primaryPath = paths[0];
   const showArg = arg && !primaryPath;
 
-  // File-op categories use the chip as the click target — no separate "view".
-  // Categories without a file (commands, searches) get a "view output" link
-  // when there's a result body to expand.
   const FILE_CATEGORIES = new Set<ToolCategory>(["explored", "created", "edited", "attached"]);
   const isFileOp = FILE_CATEGORIES.has(category);
-  const resultBody = step.result && step.result.text ? step.result.text : null;
-  const commandBody = category === "command" && typeof step.input.command === "string"
-    ? (step.input.command as string)
-    : null;
-  const showView = !isFileOp && !!(resultBody || commandBody);
-  const viewLabel = step.result?.isError ? "view error" : "view output";
 
   // Detect pptx for the "View slides" chip: either a direct file-path input
   // (write/read/edit tools) or a .pptx filename embedded in a bash command.
+  const commandBody = category === "command" && typeof step.input.command === "string"
+    ? (step.input.command as string)
+    : null;
   const pptxFromCmd = commandBody ? pptxFromCommand(commandBody) : null;
   const pptxTarget = (primaryPath && isPptxPath(primaryPath) ? primaryPath : null) ?? pptxFromCmd;
   const isPptx = !!pptxTarget;
 
   return (
-    <div className="text-[13px]">
+    <div className="text-[13px] rounded-2xl border border-neutral-200/80 bg-white/85 px-3 py-2">
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-ink-500 capitalize">{verb}</span>
         {primaryPath && <FilePathChip path={primaryPath} onOpenFile={onOpenFile} />}
@@ -913,28 +830,9 @@ function ToolDetail({
             View slides
           </button>
         )}
-        {showArg && <span className="font-mono text-ink-700 truncate">{arg}</span>}
-        {showView && (
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="text-ink-400 hover:text-ink-700 text-[11px] ml-1"
-          >
-            {open ? "hide" : viewLabel}
-          </button>
-        )}
+        {!isFileOp && showArg && <span className="font-mono text-ink-700 truncate">{arg}</span>}
+        {!isFileOp && !showArg && <span className="text-ink-400">in progress</span>}
       </div>
-      {open && showView && (
-        <div className="mt-1">
-          {commandBody && (
-            <pre className="text-xs font-mono text-ink-700 bg-neutral-50 border border-neutral-200 rounded-md p-2 mb-1 whitespace-pre-wrap">
-              $ {commandBody}
-            </pre>
-          )}
-          {resultBody && (
-            <ResultBlock text={resultBody} isError={!!step.result?.isError} />
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -955,8 +853,6 @@ export function ChatStream({
             return <UserBubble key={item.event.id} event={item.event} />;
           case "assistant":
             return <AssistantBubble key={item.event.id} text={item.text} onRetry={onRetry} />;
-          case "thinking":
-            return <ThinkingTrace key={item.eventId} text={item.text} />;
           case "tool-group":
             return <ToolGroup key={item.key} category={item.category} steps={item.steps} onOpenFile={onOpenFile} />;
           case "fallback":
