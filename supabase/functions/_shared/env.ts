@@ -13,6 +13,24 @@ const optional = [
   "ANTHROPIC_WEBHOOK_SIGNING_KEY",
   "ANTHROPIC_BETA_HEADER",
   "ANTHROPIC_DEFAULT_MODEL",
+  "OPENAI_API_KEY",
+  "GEMINI_API_KEY",
+  // Groq inference — used for per-row LLM calls in /kb ai-fill. Default
+  // model is openai/gpt-oss-20b (cheap, fast, fine for cell-fill).
+  "GROQ_API_KEY",
+  "GROQ_MODEL",
+  // Slack: required for the OAuth dance + Events API webhook signature.
+  // Slack rejects requests if any of these is wrong, so we treat them as
+  // optional at boot but let the relevant handlers surface a 500 on use.
+  "SLACK_CLIENT_ID",
+  "SLACK_CLIENT_SECRET",
+  "SLACK_SIGNING_SECRET",
+  // Where the Slack OAuth callback lands. Should be a public URL pointing
+  // at /functions/v1/slack-oauth/callback. Set to the local supabase URL in
+  // dev (use ngrok or a tunnel for testing).
+  "PUBLIC_FUNCTIONS_URL",
+  // Where to bounce the user back to after OAuth completes (the hub UI).
+  "HUB_BASE_URL",
 ] as const;
 
 type RequiredKey = (typeof required)[number];
@@ -41,4 +59,13 @@ export const ENV = {
   ANTHROPIC_WEBHOOK_SIGNING_KEY: env("ANTHROPIC_WEBHOOK_SIGNING_KEY") ?? "",
   ANTHROPIC_BETA_HEADER: env("ANTHROPIC_BETA_HEADER") ?? "managed-agents-2026-04-01",
   ANTHROPIC_DEFAULT_MODEL: env("ANTHROPIC_DEFAULT_MODEL") ?? "claude-opus-4-7",
+  OPENAI_API_KEY: env("OPENAI_API_KEY") ?? "",
+  GEMINI_API_KEY: env("GEMINI_API_KEY") ?? "",
+  GROQ_API_KEY: env("GROQ_API_KEY") ?? "",
+  GROQ_MODEL: env("GROQ_MODEL") ?? "openai/gpt-oss-20b",
+  SLACK_CLIENT_ID: env("SLACK_CLIENT_ID") ?? "",
+  SLACK_CLIENT_SECRET: env("SLACK_CLIENT_SECRET") ?? "",
+  SLACK_SIGNING_SECRET: env("SLACK_SIGNING_SECRET") ?? "",
+  PUBLIC_FUNCTIONS_URL: env("PUBLIC_FUNCTIONS_URL") ?? "",
+  HUB_BASE_URL: env("HUB_BASE_URL") ?? "",
 } as const;

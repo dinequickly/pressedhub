@@ -26,6 +26,8 @@ import {
   MemoryStoreCreateSchema,
   MemoryStoreUpdateSchema,
 } from "../_shared/schemas.ts";
+import { AnthropicMemoryStores } from "../_shared/anthropic.ts";
+import { ENV } from "../_shared/env.ts";
 
 const router = new Router("memory");
 
@@ -43,13 +45,54 @@ router.get("/stores", async (req) => {
 router.post("/stores", async (req) => {
   const user = await requireUser(req);
   const parsed = MemoryStoreCreateSchema.parse(await readJson(req));
+
+  // Mirror onto Anthropic so this store can be attached to a session as a
+  // resource. We tolerate API failure here — without it the local store
+  // still exists; the user just can't attach it until they hit
+  // /memory/stores/:id/sync-to-anthropic.
+  let anthropicId: string | null = null;
+  if (ENV.ANTHROPIC_API_KEY) {
+    try {
+      const created = await AnthropicMemoryStores.create({
+        display_name: parsed.name,
+        description: parsed.description || undefined,
+      });
+      anthropicId = created.id;
+    } catch (err) {
+      console.warn("[memory] anthropic memory_stores.create failed:", err);
+    }
+  }
+
   const { data, error } = await user.db
     .from("memory_stores")
-    .insert({ ...parsed, owner_id: user.id })
+    .insert({ ...parsed, owner_id: user.id, anthropic_id: anthropicId })
     .select()
     .single();
   if (error) throw new BadRequest(error.message);
   return ok(data, 201);
+});
+
+// Backfill / retry endpoint: bind a local store to a fresh Anthropic
+// memory store. Useful for stores created before this column existed or
+// where the original create-time API call failed.
+router.post("/stores/:id/sync-to-anthropic", async (req, params) => {
+  const user = await requireUser(req);
+  const { data: store } = await user.db.from("memory_stores").select("*").eq("id", params.id)
+    .maybeSingle();
+  if (!store) throw new NotFound("Memory store not found");
+  if (store.anthropic_id) return ok({ store, anthropic_id: store.anthropic_id });
+  const created = await AnthropicMemoryStores.create({
+    display_name: store.name,
+    description: store.description || undefined,
+  });
+  const { data: updated, error } = await user.db
+    .from("memory_stores")
+    .update({ anthropic_id: created.id })
+    .eq("id", params.id)
+    .select()
+    .single();
+  if (error) throw new BadRequest(error.message);
+  return ok({ store: updated, anthropic_id: created.id });
 });
 
 router.get("/stores/:id", async (req, params) => {
@@ -77,6 +120,12 @@ router.patch("/stores/:id", async (req, params) => {
 
 router.delete("/stores/:id", async (req, params) => {
   const user = await requireUser(req);
+  const { data: existing } = await user.db.from("memory_stores")
+    .select("anthropic_id").eq("id", params.id).maybeSingle();
+  if (existing?.anthropic_id) {
+    try { await AnthropicMemoryStores.archive(existing.anthropic_id); }
+    catch (err) { console.warn("[memory] anthropic archive failed:", err); }
+  }
   const { error } = await user.db.from("memory_stores").delete().eq("id", params.id);
   if (error) throw new Error(error.message);
   return noContent();

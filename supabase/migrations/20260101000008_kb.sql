@@ -129,6 +129,10 @@ returns table (
 language sql
 stable
 security invoker
+-- Make pgvector's `<=>` operator resolvable inside the function body. On
+-- Supabase cloud the extension lives in `extensions` and isn't in the
+-- default search_path for function execution.
+set search_path = public, extensions
 as $$
   select
     c.id as chunk_id,

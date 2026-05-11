@@ -1,0 +1,1405 @@
+---
+name: pdf
+description: Use this skill whenever the user needs help with PDF files. This includes:
+- Reading or extracting text/tables from PDFs
+- Merging or splitting PDFs
+- Rotating pages
+- Adding watermarks
+- Creating PDFs
+- Filling PDF forms
+- Encrypting or decrypting PDFs
+- Extracting images
+- Running OCR on scanned PDFs
+
+If the user mentions a `.pdf` file or asks to create one, use this skill.
+license: Proprietary. See LICENSE.txt for full terms.
+---
+
+# PDF Processing Guide
+
+## Overview
+
+This guide covers common PDF operations using Python libraries and command-line tools.
+
+For advanced features, JavaScript libraries, and extended examples, see `REFERENCE.md`.
+
+For PDF form filling, see `FORMS.md`.
+
+---
+
+# Quick Start
+
+```python
+from pypdf import PdfReader
+
+reader = PdfReader("document.pdf")
+
+print(f"Pages: {len(reader.pages)}")
+
+text = ""
+for page in reader.pages:
+    text += page.extract_text()
+
+Python Libraries
+pypdf — Basic PDF Operations
+Merge PDFs
+from pypdf import PdfReader, PdfWriter
+
+writer = PdfWriter()
+
+for pdf_file in ["doc1.pdf", "doc2.pdf", "doc3.pdf"]:
+    reader = PdfReader(pdf_file)
+
+    for page in reader.pages:
+        writer.add_page(page)
+
+with open("merged.pdf", "wb") as output:
+    writer.write(output)
+Split PDF into Individual Pages
+from pypdf import PdfReader, PdfWriter
+
+reader = PdfReader("input.pdf")
+
+for i, page in enumerate(reader.pages):
+    writer = PdfWriter()
+    writer.add_page(page)
+
+    with open(f"page_{i + 1}.pdf", "wb") as output:
+        writer.write(output)
+Extract Metadata
+from pypdf import PdfReader
+
+reader = PdfReader("document.pdf")
+meta = reader.metadata
+
+print(f"Title: {meta.title}")
+print(f"Author: {meta.author}")
+print(f"Subject: {meta.subject}")
+print(f"Creator: {meta.creator}")
+Rotate Pages
+from pypdf import PdfReader, PdfWriter
+
+reader = PdfReader("input.pdf")
+writer = PdfWriter()
+
+page = reader.pages[0]
+page.rotate(90)
+
+writer.add_page(page)
+
+with open("rotated.pdf", "wb") as output:
+    writer.write(output)
+
+pdfplumber — Text and Table Extraction
+Extract Text
+import pdfplumber
+
+with pdfplumber.open("document.pdf") as pdf:
+    for page in pdf.pages:
+        text = page.extract_text()
+        print(text)
+Extract Tables
+import pdfplumber
+
+with pdfplumber.open("document.pdf") as pdf:
+    for page_num, page in enumerate(pdf.pages, start=1):
+        tables = page.extract_tables()
+
+        for table_num, table in enumerate(tables, start=1):
+            print(f"Table {table_num} on page {page_num}")
+
+            for row in table:
+                print(row)
+Export Tables to Excel
+import pandas as pd
+import pdfplumber
+
+all_tables = []
+
+with pdfplumber.open("document.pdf") as pdf:
+    for page in pdf.pages:
+        tables = page.extract_tables()
+
+        for table in tables:
+            if table:
+                df = pd.DataFrame(table[1:], columns=table[0])
+                all_tables.append(df)
+
+if all_tables:
+    combined_df = pd.concat(all_tables, ignore_index=True)
+    combined_df.to_excel("extracted_tables.xlsx", index=False)
+
+reportlab — Create PDFs
+Create a Simple PDF
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
+c = canvas.Canvas("hello.pdf", pagesize=letter)
+
+width, height = letter
+
+c.drawString(100, height - 100, "Hello World!")
+c.drawString(100, height - 120, "This is a PDF created with reportlab")
+
+c.line(100, height - 140, 400, height - 140)
+
+c.save()
+Create a Multi-Page PDF
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    PageBreak,
+)
+from reportlab.lib.styles import getSampleStyleSheet
+
+doc = SimpleDocTemplate("report.pdf", pagesize=letter)
+
+styles = getSampleStyleSheet()
+story = []
+
+story.append(Paragraph("Report Title", styles["Title"]))
+story.append(Spacer(1, 12))
+
+body = Paragraph(
+    "This is the body of the report. " * 20,
+    styles["Normal"],
+)
+
+story.append(body)
+story.append(PageBreak())
+
+story.append(Paragraph("Page 2", styles["Heading1"]))
+story.append(Paragraph("Content for page 2", styles["Normal"]))
+
+doc.build(story)
+Subscripts and Superscripts
+Do not use Unicode subscript or superscript characters in ReportLab PDFs:
+₀₁₂₃₄₅₆₇₈₉
+⁰¹²³⁴⁵⁶⁷⁸⁹
+Many built-in fonts do not support these glyphs.
+Use ReportLab XML tags instead:
+from reportlab.platypus import Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
+
+styles = getSampleStyleSheet()
+
+chemical = Paragraph(
+    "H<sub>2</sub>O",
+    styles["Normal"],
+)
+
+equation = Paragraph(
+    "x<super>2</super> + y<super>2</super>",
+    styles["Normal"],
+)
+For canvas-based drawing, manually adjust font size and positioning.
+
+Command-Line Tools
+pdftotext (poppler-utils)
+Extract Text
+pdftotext input.pdf output.txt
+Preserve Layout
+pdftotext -layout input.pdf output.txt
+Extract Specific Pages
+pdftotext -f 1 -l 5 input.pdf output.txt
+
+qpdf
+Merge PDFs
+qpdf --empty --pages file1.pdf file2.pdf -- merged.pdf
+Split PDFs
+qpdf input.pdf --pages . 1-5 -- pages1-5.pdf
+qpdf input.pdf --pages . 6-10 -- pages6-10.pdf
+Rotate Pages
+qpdf input.pdf output.pdf --rotate=+90:1
+Remove Password
+qpdf --password=mypassword --decrypt encrypted.pdf decrypted.pdf
+
+pdftk
+Merge PDFs
+pdftk file1.pdf file2.pdf cat output merged.pdf
+Split PDFs
+pdftk input.pdf burst
+Rotate Pages
+pdftk input.pdf rotate 1east output rotated.pdf
+
+Common Tasks
+OCR for Scanned PDFs
+import pytesseract
+from pdf2image import convert_from_path
+
+images = convert_from_path("scanned.pdf")
+
+text = ""
+
+for i, image in enumerate(images, start=1):
+    text += f"Page {i}\n"
+    text += pytesseract.image_to_string(image)
+    text += "\n\n"
+
+print(text)
+Requirements:
+pip install pytesseract pdf2image
+
+Add a Watermark
+from pypdf import PdfReader, PdfWriter
+
+watermark = PdfReader("watermark.pdf").pages[0]
+
+reader = PdfReader("document.pdf")
+writer = PdfWriter()
+
+for page in reader.pages:
+    page.merge_page(watermark)
+    writer.add_page(page)
+
+with open("watermarked.pdf", "wb") as output:
+    writer.write(output)
+
+Extract Images
+pdfimages -j input.pdf output_prefix
+Example output:
+output_prefix-000.jpg
+output_prefix-001.jpg
+
+Password Protection
+from pypdf import PdfReader, PdfWriter
+
+reader = PdfReader("input.pdf")
+writer = PdfWriter()
+
+for page in reader.pages:
+    writer.add_page(page)
+
+writer.encrypt(
+    user_password="userpassword",
+    owner_password="ownerpassword",
+)
+
+with open("encrypted.pdf", "wb") as output:
+    writer.write(output)
+
+Quick Reference
+Task	Recommended Tool
+Merge PDFs	pypdf
+Split PDFs	pypdf
+Extract text	pdfplumber
+Extract tables	pdfplumber
+Create PDFs	reportlab
+OCR scanned PDFs	pytesseract
+Fill PDF forms	pdf-lib or pypdf
+Command-line merging	qpdf
+Additional Resources
+* REFERENCE.md — Advanced usage and troubleshooting
+* FORMS.md — PDF form filling
+* LICENSE.txt — License details
+
+---
+name: xlsx
+description: >
+  Use this skill whenever a spreadsheet file is the primary input or output.
+
+  Trigger when the user wants to:
+  - Open, read, edit, repair, clean, analyze, or format spreadsheet files
+  - Create a new spreadsheet from scratch or from other data sources
+  - Add formulas, charts, tables, pivots, or formatting
+  - Convert between .xlsx, .xlsm, .csv, and .tsv formats
+  - Restructure messy tabular data into a usable spreadsheet
+
+  Especially trigger when the user references a spreadsheet file by name or path,
+  even casually (e.g. “the xlsx in my downloads”).
+
+  The final deliverable must be a spreadsheet file.
+
+  Do NOT trigger when the primary deliverable is:
+  - A Word document
+  - An HTML report
+  - A standalone Python script
+  - A database pipeline
+  - A Google Sheets API integration
+
+license: Proprietary. See LICENSE.txt for full terms.
+---
+
+# XLSX Creation, Editing, and Analysis
+
+## Core Requirements
+
+### Professional Formatting
+- Use a consistent professional font unless the user specifies otherwise
+  - Preferred: Arial or Times New Roman
+- Maintain clean spacing and alignment
+
+### Zero Formula Errors
+All delivered Excel models must contain:
+- No `#REF!`
+- No `#DIV/0!`
+- No `#VALUE!`
+- No `#N/A`
+- No `#NAME?`
+
+### Preserve Existing Templates
+When editing existing workbooks:
+- Match the workbook’s existing style and conventions exactly
+- Preserve established formatting patterns
+- Do not impose new formatting standards unless requested
+- Existing template conventions override these guidelines
+
+---
+
+# Financial Model Standards
+
+## Color Coding Conventions
+
+Unless overridden by the workbook template or user instructions:
+
+| Purpose | Format |
+|---|---|
+| Hardcoded inputs | Blue text (RGB 0,0,255) |
+| Formulas/calculations | Black text (RGB 0,0,0) |
+| Internal worksheet links | Green text (RGB 0,128,0) |
+| External workbook links | Red text (RGB 255,0,0) |
+| Key assumptions | Yellow fill (RGB 255,255,0) |
+
+## Number Formatting
+
+| Type | Standard |
+|---|---|
+| Years | Text format (`2024`, not `2,024`) |
+| Currency | `$#,##0` |
+| Percentages | `0.0%` |
+| Multiples | `0.0x` |
+| Negative numbers | `(123)` not `-123` |
+| Zeros | Display as `-` |
+
+Examples:
+- Currency: `$#,##0;($#,##0);-`
+- Percentages: `0.0%;(0.0%);-`
+
+Always include units in headers:
+- Example: `Revenue ($mm)`
+
+---
+
+# Formula Construction Rules
+
+## Assumptions
+- Store assumptions in dedicated cells
+- Reference assumption cells in formulas
+- Never hardcode assumptions inside formulas
+
+Correct:
+```excel
+=B5*(1+$B$6)
+Incorrect:
+=B5*1.05
+Formula Quality Checks
+* Verify all references
+* Avoid off-by-one errors
+* Keep formulas consistent across periods
+* Test zero and negative-value edge cases
+* Avoid unintended circular references
+Hardcoded Input Documentation
+Document all hardcoded assumptions or imported values.
+Format:
+Source: [System/Document], [Date], [Reference], [URL if applicable]
+Examples:
+* Source: Company 10-K, FY2024, Page 45
+* Source: Bloomberg Terminal, 8/15/2025
+* Source: FactSet, 8/20/2025
+
+Python Workflow Guidance
+Recommended Libraries
+Library	Best Use
+pandas	Data analysis, cleaning, bulk operations
+openpyxl	Formatting, formulas, Excel-specific editing
+CRITICAL: Use Excel Formulas
+Always write calculations as Excel formulas.
+Do NOT calculate values in Python and hardcode results.
+Incorrect:
+total = df['Sales'].sum()
+sheet['B10'] = total
+Correct:
+sheet['B10'] = '=SUM(B2:B9)'
+The workbook must remain dynamic and recalculate correctly when source values change.
+
+Standard Workflow
+1. Load or create workbook
+2. Modify data, formulas, and formatting
+3. Save workbook
+4. Recalculate formulas
+5. Validate and fix errors
+Mandatory Formula Recalculation
+Use:
+python scripts/recalc.py output.xlsx
+The script:
+* Recalculates formulas using LibreOffice
+* Detects Excel errors
+* Returns structured JSON output
+* Works on Linux and macOS
+LibreOffice setup is handled automatically.
+
+Common Excel Operations
+Read Excel with pandas
+import pandas as pd
+
+df = pd.read_excel('file.xlsx')
+all_sheets = pd.read_excel('file.xlsx', sheet_name=None)
+Write Excel with pandas
+df.to_excel('output.xlsx', index=False)
+
+Creating Excel Files with openpyxl
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+
+wb = Workbook()
+ws = wb.active
+
+ws['A1'] = 'Hello'
+ws['B1'] = '=SUM(B2:B10)'
+
+ws['A1'].font = Font(bold=True)
+ws['A1'].alignment = Alignment(horizontal='center')
+
+wb.save('output.xlsx')
+
+Editing Existing Workbooks
+from openpyxl import load_workbook
+
+wb = load_workbook('existing.xlsx')
+ws = wb.active
+
+ws['A1'] = 'Updated'
+ws.insert_rows(2)
+
+wb.save('modified.xlsx')
+
+Formula Verification Checklist
+Essential Checks
+* Verify sample references before scaling formulas
+* Confirm correct column mappings
+* Remember Excel uses 1-based indexing
+Common Pitfalls
+* Null/NaN handling
+* Wrong sheet references
+* Division by zero
+* Missing referenced cells
+* Incorrect far-right column mapping
+Testing Strategy
+* Start with a few cells
+* Verify dependencies
+* Test edge cases:
+    * Zero values
+    * Negative values
+    * Large values
+
+Interpreting recalc.py Output
+Example:
+{
+  "status": "success",
+  "total_errors": 0,
+  "total_formulas": 42
+}
+If errors exist:
+{
+  "status": "errors_found",
+  "error_summary": {
+    "#REF!": {
+      "count": 2,
+      "locations": ["Sheet1!B5"]
+    }
+  }
+}
+
+Best Practices
+openpyxl
+* Excel indexing is 1-based
+* Use data_only=True only when reading calculated values
+* Saving a workbook opened with data_only=True removes formulas
+* Use read_only=True for large reads
+* Use write_only=True for large writes
+pandas
+* Specify dtypes when needed
+* Limit columns for large files
+* Parse dates explicitly
+Example:
+pd.read_excel(
+    'file.xlsx',
+    dtype={'id': str},
+    parse_dates=['date']
+)
+
+Code Style
+Python Code
+* Keep code concise
+* Avoid unnecessary comments
+* Avoid redundant variables
+* Avoid excessive print statements
+Excel Models
+* Add comments for complex formulas
+* Document assumptions
+* Add notes for key calculations
+
+---
+name: pptx
+description: >
+  Use this skill whenever a .pptx file is involved in any way — as input,
+  output, or both.
+
+  This includes:
+  - Creating presentations, slide decks, or pitch decks
+  - Reading, parsing, or extracting content from .pptx files
+  - Editing or updating existing presentations
+  - Combining or splitting slide decks
+  - Working with templates, layouts, speaker notes, or comments
+
+  Trigger this skill whenever the user mentions:
+  - “deck”
+  - “slides”
+  - “presentation”
+  - Any .pptx filename
+
+  If a .pptx file needs to be opened, created, modified, or analyzed, use this skill.
+license: Proprietary. See LICENSE.txt for complete terms.
+---
+
+# PPTX Skill
+
+## Quick Reference
+
+| Task | Command / Guide |
+|---|---|
+| Read or analyze content | `python -m markitdown presentation.pptx` |
+| Edit or create from template | See [editing.md](editing.md) |
+| Create from scratch | See [pptxgenjs.md](pptxgenjs.md) |
+
+---
+
+# Reading Content
+
+## Extract Text
+
+```bash
+python -m markitdown presentation.pptx
+Generate Slide Thumbnails
+python scripts/thumbnail.py presentation.pptx
+Unpack Raw XML
+python scripts/office/unpack.py presentation.pptx unpacked/
+
+Editing Workflow
+See editing.md for full details.
+Typical workflow:
+1. Analyze the template with thumbnail.py
+2. Unpack the presentation
+3. Modify slides and content
+4. Clean artifacts/placeholders
+5. Repack the deck
+
+Creating Presentations from Scratch
+See pptxgenjs.md for full details.
+Use this approach when:
+* No template exists
+* No reference deck is available
+* A fully custom presentation is needed
+
+Design Guidance
+Core Principles
+Avoid Generic Slides
+Do not create plain bullet lists on white backgrounds. Every slide should feel intentionally designed.
+Use a Topic-Specific Color Palette
+Choose colors that match the subject matter. If the same palette works equally well for unrelated topics, it is probably too generic.
+Establish Visual Hierarchy
+* One dominant color should carry 60–70% of the visual weight
+* Use 1–2 supporting colors
+* Reserve a strong accent color for emphasis
+Maintain Consistent Visual Motifs
+Pick one reusable design element and repeat it throughout the deck, such as:
+* Rounded image frames
+* Colored icon circles
+* Thick side borders
+* Consistent card treatments
+Consider a “Sandwich” Structure
+A common pattern:
+* Dark title slide
+* Light content slides
+* Dark conclusion slide
+Or commit fully to a dark theme for a premium look.
+
+Suggested Color Palettes
+Theme	Primary	Secondary	Accent
+Midnight Executive	#1E2761	#CADCFC	#FFFFFF
+Forest & Moss	#2C5F2D	#97BC62	#F5F5F5
+Coral Energy	#F96167	#F9E795	#2F3C7E
+Warm Terracotta	#B85042	#E7E8D1	#A7BEAE
+Ocean Gradient	#065A82	#1C7293	#21295C
+Charcoal Minimal	#36454F	#F2F2F2	#212121
+Teal Trust	#028090	#00A896	#02C39A
+Berry & Cream	#6D2E46	#A26769	#ECE2D0
+Sage Calm	#84B59F	#69A297	#50808E
+Cherry Bold	#990011	#FCF6F5	#2F3C7E
+Slide Layout Ideas
+Every slide should contain a meaningful visual element:
+* Images
+* Charts
+* Icons
+* Shapes
+* Diagrams
+Avoid text-only slides.
+Common Layout Patterns
+* Two-column layouts
+* Icon + text rows
+* 2×2 or 2×3 grids
+* Half-bleed image layouts
+* Overlay text on imagery
+Effective Data Presentation
+* Large statistic callouts
+* Side-by-side comparisons
+* Timelines and process flows
+* Numbered sequences
+Visual Polish
+* Icons inside colored circles
+* Accent typography
+* Consistent spacing
+* Intentional whitespace
+
+Typography
+Recommended Font Pairings
+Header Font	Body Font
+Georgia	Calibri
+Arial Black	Arial
+Calibri	Calibri Light
+Cambria	Calibri
+Trebuchet MS	Calibri
+Impact	Arial
+Palatino	Garamond
+Consolas	Calibri
+Recommended Sizes
+Element	Size
+Slide title	36–44 pt bold
+Section header	20–24 pt bold
+Body text	14–16 pt
+Captions	10–12 pt
+Spacing Guidelines
+* Minimum margins: 0.5"
+* Gap between content blocks: 0.3"–0.5"
+* Leave adequate breathing room
+* Avoid overfilling slides
+
+Common Mistakes to Avoid
+* Repeating the same layout on every slide
+* Center-aligning body text
+* Weak size contrast between headings and body copy
+* Defaulting to generic blue palettes
+* Inconsistent spacing
+* Styling only a few slides while leaving others plain
+* Creating text-only slides
+* Forgetting text box padding
+* Using low-contrast text or icons
+* Overly narrow text boxes causing awkward wrapping
+Important
+Never use decorative accent lines under slide titles. This is a strong indicator of low-quality AI-generated slides.
+Use whitespace, typography, or color blocking instead.
+
+QA Process (Required)
+Assume the first render contains issues.
+Your job is to actively find and fix them.
+
+Content QA
+Extract and Review Text
+python -m markitdown output.pptx
+Check for:
+* Missing content
+* Typos
+* Incorrect slide order
+* Formatting issues
+Detect Placeholder Content
+python -m markitdown output.pptx | grep -iE "xxxx|lorem|ipsum|this.*(page|slide).*layout"
+If any results appear, remove or replace them before finalizing.
+
+Visual QA
+Required Workflow
+Convert slides to images and inspect them visually.
+Convert Slides to Images
+python scripts/office/soffice.py --headless --convert-to pdf output.pptx
+pdftoppm -jpeg -r 150 output.pdf slide
+ls slide-*.jpg
+Note:
+* slide-1.jpg for decks under 10 slides
+* slide-01.jpg for 10–99 slides
+* slide-001.jpg for 100+ slides
+Use the exact filenames returned by ls.
+
+Visual Inspection Checklist
+Look for:
+* Overlapping elements
+* Text overflow or clipping
+* Misaligned decorative elements
+* Footer collisions
+* Uneven spacing
+* Elements too close together
+* Insufficient margins
+* Inconsistent alignment
+* Low-contrast text or icons
+* Excessive text wrapping
+* Leftover placeholders
+
+Suggested Review Prompt
+Visually inspect these slides. Assume there are issues — find them.
+
+Look for:
+- Overlapping elements
+- Text overflow
+- Alignment problems
+- Uneven spacing
+- Low contrast
+- Placeholder content
+- Clipping or cutoff text
+
+For each slide, report all issues found, including minor ones.
+
+Verification Loop
+1. Generate slides
+2. Convert to images
+3. Inspect carefully
+4. List issues
+5. Fix issues
+6. Re-render affected slides
+7. Re-check for new problems
+Do not declare success until at least one full fix-and-verify cycle is complete.
+
+Re-Render Individual Slides
+pdftoppm -jpeg -r 150 -f N -l N output.pdf slide-fixed
+Replace N with the slide number.
+
+Dependencies
+Python Packages
+pip install "markitdown[pptx]"
+pip install Pillow
+Node Package
+npm install -g pptxgenjs
+System Dependencies
+* LibreOffice (soffice) — PDF conversion
+* Poppler (pdftoppm) — PDF to image conversion
+
+DOCX Editing & Generation Reference
+Overview
+A .docx file is a ZIP archive containing XML files.
+
+Quick Reference
+Task	Approach
+Read/analyze content	pandoc or unpack raw XML
+Create new document	docx-js
+Edit existing document	Unpack → edit XML → repack
+Converting .doc to .docx
+Legacy .doc files must be converted before editing.
+python scripts/office/soffice.py --headless --convert-to docx document.doc
+
+Reading Content
+Extract Text
+pandoc --track-changes=all document.docx -o output.md
+Access Raw XML
+python scripts/office/unpack.py document.docx unpacked/
+
+Converting to Images
+python scripts/office/soffice.py --headless --convert-to pdf document.docx
+pdftoppm -jpeg -r 150 document.pdf page
+
+Accepting Tracked Changes
+Requires LibreOffice.
+python scripts/accept_changes.py input.docx output.docx
+
+Creating New Documents
+Generate .docx files with JavaScript.
+Install:
+npm install -g docx
+
+Basic Setup
+const {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  Table,
+  TableRow,
+  TableCell,
+  ImageRun,
+  Header,
+  Footer,
+  AlignmentType,
+  PageOrientation,
+  LevelFormat,
+  ExternalHyperlink,
+  InternalHyperlink,
+  Bookmark,
+  FootnoteReferenceRun,
+  PositionalTab,
+  PositionalTabAlignment,
+  PositionalTabRelativeTo,
+  PositionalTabLeader,
+  TabStopType,
+  TabStopPosition,
+  Column,
+  SectionType,
+  TableOfContents,
+  HeadingLevel,
+  BorderStyle,
+  WidthType,
+  ShadingType,
+  VerticalAlign,
+  PageNumber,
+  PageBreak,
+} = require("docx");
+
+const doc = new Document({
+  sections: [{ children: [] }],
+});
+
+Packer.toBuffer(doc).then((buffer) => {
+  fs.writeFileSync("doc.docx", buffer);
+});
+
+Validation
+Always validate generated files.
+python scripts/office/validate.py doc.docx
+If validation fails:
+1. Unpack
+2. Fix XML
+3. Repack
+
+Page Size
+docx-js defaults to A4. Explicitly set page size for consistent rendering.
+US Letter
+sections: [{
+  properties: {
+    page: {
+      size: {
+        width: 12240,
+        height: 15840,
+      },
+      margin: {
+        top: 1440,
+        right: 1440,
+        bottom: 1440,
+        left: 1440,
+      },
+    },
+  },
+  children: [],
+}]
+Common Sizes
+Paper	Width	Height	Content Width
+US Letter	12240	15840	9360
+A4	11906	16838	9026
+	•	Units are DXA
+* 1440 DXA = 1 inch
+
+Landscape Orientation
+Pass portrait dimensions and let docx-js swap internally.
+size: {
+  width: 12240,
+  height: 15840,
+  orientation: PageOrientation.LANDSCAPE,
+}
+
+Styles
+Use Arial as the default font.
+const doc = new Document({
+  styles: {
+    default: {
+      document: {
+        run: {
+          font: "Arial",
+          size: 24,
+        },
+      },
+    },
+
+    paragraphStyles: [
+      {
+        id: "Heading1",
+        name: "Heading 1",
+        basedOn: "Normal",
+        next: "Normal",
+        quickFormat: true,
+
+        run: {
+          size: 32,
+          bold: true,
+          font: "Arial",
+        },
+
+        paragraph: {
+          spacing: {
+            before: 240,
+            after: 240,
+          },
+          outlineLevel: 0,
+        },
+      },
+
+      {
+        id: "Heading2",
+        name: "Heading 2",
+        basedOn: "Normal",
+        next: "Normal",
+        quickFormat: true,
+
+        run: {
+          size: 28,
+          bold: true,
+          font: "Arial",
+        },
+
+        paragraph: {
+          spacing: {
+            before: 180,
+            after: 180,
+          },
+          outlineLevel: 1,
+        },
+      },
+    ],
+  },
+});
+
+Lists
+Never manually insert Unicode bullets.
+Incorrect
+new Paragraph({
+  children: [new TextRun("• Item")],
+});
+Correct
+const doc = new Document({
+  numbering: {
+    config: [
+      {
+        reference: "bullets",
+        levels: [{
+          level: 0,
+          format: LevelFormat.BULLET,
+          text: "•",
+          alignment: AlignmentType.LEFT,
+          style: {
+            paragraph: {
+              indent: {
+                left: 720,
+                hanging: 360,
+              },
+            },
+          },
+        }],
+      },
+    ],
+  },
+});
+
+Tables
+Critical Rules
+* Always use WidthType.DXA
+* Never use percentages
+* Table width must equal the sum of column widths
+* Set widths on:
+    * table
+    * columns
+    * cells
+Example
+const border = {
+  style: BorderStyle.SINGLE,
+  size: 1,
+  color: "CCCCCC",
+};
+
+const borders = {
+  top: border,
+  bottom: border,
+  left: border,
+  right: border,
+};
+
+new Table({
+  width: {
+    size: 9360,
+    type: WidthType.DXA,
+  },
+
+  columnWidths: [4680, 4680],
+
+  rows: [
+    new TableRow({
+      children: [
+        new TableCell({
+          borders,
+
+          width: {
+            size: 4680,
+            type: WidthType.DXA,
+          },
+
+          shading: {
+            fill: "D5E8F0",
+            type: ShadingType.CLEAR,
+          },
+
+          margins: {
+            top: 80,
+            bottom: 80,
+            left: 120,
+            right: 120,
+          },
+
+          children: [
+            new Paragraph("Cell"),
+          ],
+        }),
+      ],
+    }),
+  ],
+});
+
+Images
+ImageRun requires a type.
+new Paragraph({
+  children: [
+    new ImageRun({
+      type: "png",
+      data: fs.readFileSync("image.png"),
+
+      transformation: {
+        width: 200,
+        height: 150,
+      },
+
+      altText: {
+        title: "Title",
+        description: "Description",
+        name: "Name",
+      },
+    }),
+  ],
+});
+
+Page Breaks
+new Paragraph({
+  children: [new PageBreak()],
+});
+Or:
+new Paragraph({
+  pageBreakBefore: true,
+});
+
+Hyperlinks
+External Link
+new Paragraph({
+  children: [
+    new ExternalHyperlink({
+      children: [
+        new TextRun({
+          text: "Click here",
+          style: "Hyperlink",
+        }),
+      ],
+
+      link: "https://example.com",
+    }),
+  ],
+});
+
+Internal Link
+Bookmark
+new Paragraph({
+  heading: HeadingLevel.HEADING_1,
+
+  children: [
+    new Bookmark({
+      id: "chapter1",
+      children: [new TextRun("Chapter 1")],
+    }),
+  ],
+});
+Link
+new Paragraph({
+  children: [
+    new InternalHyperlink({
+      children: [
+        new TextRun({
+          text: "See Chapter 1",
+          style: "Hyperlink",
+        }),
+      ],
+
+      anchor: "chapter1",
+    }),
+  ],
+});
+
+Footnotes
+const doc = new Document({
+  footnotes: {
+    1: {
+      children: [
+        new Paragraph("Source: Annual Report 2024"),
+      ],
+    },
+  },
+
+  sections: [{
+    children: [
+      new Paragraph({
+        children: [
+          new TextRun("Revenue grew 15%"),
+          new FootnoteReferenceRun(1),
+        ],
+      }),
+    ],
+  }],
+});
+
+Tab Stops
+Right Alignment
+new Paragraph({
+  children: [
+    new TextRun("Company Name"),
+    new TextRun("\tJanuary 2025"),
+  ],
+
+  tabStops: [{
+    type: TabStopType.RIGHT,
+    position: TabStopPosition.MAX,
+  }],
+});
+
+Dot Leader
+new Paragraph({
+  children: [
+    new TextRun("Introduction"),
+
+    new TextRun({
+      children: [
+        new PositionalTab({
+          alignment: PositionalTabAlignment.RIGHT,
+          relativeTo: PositionalTabRelativeTo.MARGIN,
+          leader: PositionalTabLeader.DOT,
+        }),
+
+        "3",
+      ],
+    }),
+  ],
+});
+
+Multi-Column Layouts
+Equal Width
+sections: [{
+  properties: {
+    column: {
+      count: 2,
+      space: 720,
+      equalWidth: true,
+      separate: true,
+    },
+  },
+}]
+Custom Width
+sections: [{
+  properties: {
+    column: {
+      equalWidth: false,
+
+      children: [
+        new Column({
+          width: 5400,
+          space: 720,
+        }),
+
+        new Column({
+          width: 3240,
+        }),
+      ],
+    },
+  },
+}]
+
+Table of Contents
+Use HeadingLevel.
+new TableOfContents("Table of Contents", {
+  hyperlink: true,
+  headingStyleRange: "1-3",
+});
+
+Headers & Footers
+sections: [{
+  headers: {
+    default: new Header({
+      children: [
+        new Paragraph("Header"),
+      ],
+    }),
+  },
+
+  footers: {
+    default: new Footer({
+      children: [
+        new Paragraph({
+          children: [
+            new TextRun("Page "),
+            new TextRun({
+              children: [PageNumber.CURRENT],
+            }),
+          ],
+        }),
+      ],
+    }),
+  },
+}]
+
+Critical Rules
+Document Structure
+* Set page size explicitly
+* Use separate Paragraph elements instead of \n
+* PageBreak must be inside a Paragraph
+Lists
+* Never manually insert bullet characters
+* Use numbering config with LevelFormat.BULLET
+Tables
+* Always use WidthType.DXA
+* Never use percentage widths
+* Table width must equal column widths
+* Cell widths must match columns
+* Always set cell margins
+* Use ShadingType.CLEAR
+Images
+* Always specify image type
+TOC & Headings
+* Use HeadingLevel
+* Override built-in style IDs:
+    * Heading1
+    * Heading2
+* Include outlineLevel
+
+Editing Existing Documents
+Workflow
+1. Unpack
+2. Edit XML
+3. Repack
+
+Step 1 — Unpack
+python scripts/office/unpack.py document.docx unpacked/
+Features:
+* Pretty-prints XML
+* Merges adjacent runs
+* Converts smart quotes to XML entities
+
+Step 2 — Edit XML
+Edit files in:
+unpacked/word/
+Rules
+* Use "Claude" as author unless specified otherwise
+* Use direct edits instead of scripts
+* Preserve formatting runs
+* Use smart quotes
+Smart Quote Entities
+Entity	Character
+&#x2018;	‘
+&#x2019;	’
+&#x201C;	“
+&#x201D;	”
+Example:
+<w:t>Here&#x2019;s a quote: &#x201C;Hello&#x201D;</w:t>
+
+Adding Comments
+python scripts/comment.py unpacked/ 0 "Comment text"
+Reply:
+python scripts/comment.py unpacked/ 1 "Reply text" --parent 0
+Custom author:
+python scripts/comment.py unpacked/ 0 "Text" --author "Custom Author"
+
+Step 3 — Repack
+python scripts/office/pack.py unpacked/ output.docx --original document.docx
+
+XML Reference
+Schema Rules
+* <w:rPr> must appear last in <w:pPr>
+* Use xml:space="preserve" when needed
+* RSIDs must be 8-digit hex values
+
+Tracked Changes
+Insertion
+<w:ins w:id="1" w:author="Claude" w:date="2025-01-01T00:00:00Z">
+  <w:r>
+    <w:t>inserted text</w:t>
+  </w:r>
+</w:ins>
+Deletion
+<w:del w:id="2" w:author="Claude" w:date="2025-01-01T00:00:00Z">
+  <w:r>
+    <w:delText>deleted text</w:delText>
+  </w:r>
+</w:del>
+
+Minimal Edits
+Only mark changed text.
+<w:r><w:t>The term is </w:t></w:r>
+
+<w:del w:id="1" w:author="Claude">
+  <w:r><w:delText>30</w:delText></w:r>
+</w:del>
+
+<w:ins w:id="2" w:author="Claude">
+  <w:r><w:t>60</w:t></w:r>
+</w:ins>
+
+<w:r><w:t> days.</w:t></w:r>
+
+Comments
+commentRangeStart and commentRangeEnd must be siblings of w:r.
+<w:commentRangeStart w:id="0"/>
+
+<w:r>
+  <w:t>text</w:t>
+</w:r>
+
+<w:commentRangeEnd w:id="0"/>
+
+<w:r>
+  <w:rPr>
+    <w:rStyle w:val="CommentReference"/>
+  </w:rPr>
+
+  <w:commentReference w:id="0"/>
+</w:r>
+
+Images in Raw XML
+Add Media File
+word/media/image1.png
+Add Relationship
+<Relationship
+  Id="rId5"
+  Type=".../image"
+  Target="media/image1.png"/>
+Add Content Type
+<Default
+  Extension="png"
+  ContentType="image/png"/>
+Reference in document.xml
+<w:drawing>
+  <wp:inline>
+    <wp:extent cx="914400" cy="914400"/>
+
+    <a:graphic>
+      <a:graphicData uri=".../picture">
+        <pic:pic>
+          <pic:blipFill>
+            <a:blip r:embed="rId5"/>
+          </pic:blipFill>
+        </pic:pic>
+      </a:graphicData>
+    </a:graphic>
+  </wp:inline>
+</w:drawing>
+
+Dependencies
+* pandoc
+* docx
+* LibreOffice
+* Poppler (pdftoppm)

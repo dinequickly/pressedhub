@@ -4,7 +4,7 @@
 
 import { BadRequest, NotFound } from "./errors.ts";
 
-type Method = "GET" | "POST" | "PATCH" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 type Handler = (req: Request, params: Record<string, string>) => Promise<Response> | Response;
 
@@ -46,6 +46,7 @@ export class Router {
 
   get(p: string, h: Handler) { return this.add("GET", p, h); }
   post(p: string, h: Handler) { return this.add("POST", p, h); }
+  put(p: string, h: Handler) { return this.add("PUT", p, h); }
   patch(p: string, h: Handler) { return this.add("PATCH", p, h); }
   delete(p: string, h: Handler) { return this.add("DELETE", p, h); }
 

@@ -59,3 +59,11 @@ verify_jwt = false
 
 [functions.triggers-email-inbound]
 verify_jwt = false
+
+# Slack OAuth callback + Events API webhook are hit by Slack itself.
+# The functions verify the Slack signing secret on every request.
+[functions.slack-oauth]
+verify_jwt = false
+
+[functions.slack-events]
+verify_jwt = false

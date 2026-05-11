@@ -1,7 +1,9 @@
 // /functions/v1/webhooks-anthropic
 // Public endpoint that receives Anthropic Managed Agents webhook events.
 // Verifies the X-Webhook-Signature header against ANTHROPIC_WEBHOOK_SIGNING_KEY
-// and updates session/vault rows accordingly.
+// and updates session/vault rows accordingly. Also relays the agent's
+// final messages back to Slack for sessions that originated from a Slack
+// app_mention (trigger_summary starts with `slack:`).
 //
 // JWT verification is disabled for this function in supabase/config.toml.
 
@@ -10,6 +12,7 @@ import { ok } from "../_shared/errors.ts";
 import { AnthropicSessions, AnthropicWebhooks } from "../_shared/anthropic.ts";
 import { serviceClient } from "../_shared/supabase.ts";
 import { writeAudit } from "../_shared/audit.ts";
+import { ctxFromSession, relayOnce } from "../_shared/slack_relay.ts";
 
 Deno.serve(wrap(async (req) => {
   if (req.method !== "POST") {
@@ -34,21 +37,33 @@ Deno.serve(wrap(async (req) => {
   const externalId = event.data.id;
 
   // Session lifecycle events: refresh the local sessions row from Anthropic
-  // when the state changes.
+  // when the state changes, then relay any new agent messages back to Slack
+  // when the session originated from an app_mention.
   if (t.startsWith("session.") && externalId) {
     try {
-      const session = await AnthropicSessions.retrieve(externalId);
-      await sc
+      const remote = await AnthropicSessions.retrieve(externalId);
+      const { data: localRow } = await sc
         .from("sessions")
         .update({
-          status: session.status,
-          outcome_evaluations: session.outcome_evaluations ?? [],
-          usage: session.usage ?? {},
-          finished_at: ["idle", "terminated"].includes(session.status)
+          status: remote.status,
+          outcome_evaluations: remote.outcome_evaluations ?? [],
+          usage: remote.usage ?? {},
+          finished_at: ["idle", "terminated"].includes(remote.status)
             ? new Date().toISOString()
             : null,
         })
-        .eq("anthropic_id", externalId);
+        .eq("anthropic_id", externalId)
+        .select("id,trigger_summary,trigger_payload")
+        .single();
+
+      if (localRow) {
+        try {
+          const ctx = await ctxFromSession(sc, localRow.id as string);
+          if (ctx) await relayOnce(sc, ctx);
+        } catch (err) {
+          console.warn("[slack-relay] threw:", err);
+        }
+      }
     } catch (err) {
       console.warn("session refresh on webhook failed:", err);
     }

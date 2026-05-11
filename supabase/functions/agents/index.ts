@@ -12,9 +12,42 @@ import { requireUser } from "../_shared/auth.ts";
 import { BadRequest, NotFound, noContent, ok, Upstream } from "../_shared/errors.ts";
 import { AgentCreateSchema, AgentUpdateSchema } from "../_shared/schemas.ts";
 import { AnthropicAgents } from "../_shared/anthropic.ts";
+import { KB_TOOL_DEFS, KB_TOOL_NAMES } from "../_shared/kb_tools.ts";
 import { writeAudit } from "../_shared/audit.ts";
 
 const router = new Router("agents");
+
+// Every agent gets the KB toolset for free, on top of whatever toolset the
+// caller specified. Strip any pre-existing kb_* entries to keep create/update
+// idempotent if the caller round-trips agent.tools through us.
+function withKbTools(stored: unknown[]): Record<string, unknown>[] {
+  const base = (stored ?? []).filter((t) => {
+    if (typeof t !== "object" || t === null) return true;
+    const name = (t as Record<string, unknown>).name;
+    return !(typeof name === "string" && (KB_TOOL_NAMES as readonly string[]).includes(name));
+  }) as Record<string, unknown>[];
+  return [...base, ...KB_TOOL_DEFS];
+}
+
+// Skill entries are stored locally with a `local_id` so the UI can round-trip
+// the selection. Anthropic only accepts `type` / `skill_id` / `version`, so we
+// strip the local-only fields before forwarding.
+function skillsForAnthropic(stored: unknown[]): Record<string, unknown>[] {
+  return (stored ?? [])
+    .map((s) => {
+      if (typeof s !== "object" || s === null) return null;
+      const o = s as Record<string, unknown>;
+      const skill_id = o.skill_id ?? o.id;
+      const type = o.type;
+      if (typeof skill_id !== "string" || (type !== "anthropic" && type !== "custom")) {
+        return null;
+      }
+      const out: Record<string, unknown> = { type, skill_id };
+      if (type === "custom") out.version = (o.version as string) ?? "latest";
+      return out;
+    })
+    .filter(Boolean) as Record<string, unknown>[];
+}
 
 router.get("/", async (req) => {
   const user = await requireUser(req);
@@ -51,11 +84,13 @@ router.post("/", async (req) => {
       name: parsed.name,
       model: parsed.model,
       system: parsed.system_prompt,
-      tools: parsed.tools.length
-        ? (parsed.tools as Record<string, unknown>[])
-        : [{ type: "agent_toolset_20260401" }],
+      tools: withKbTools(
+        parsed.tools.length
+          ? (parsed.tools as Record<string, unknown>[])
+          : [{ type: "agent_toolset_20260401" }],
+      ),
       mcp_servers: parsed.mcp_servers as Record<string, unknown>[],
-      skills: parsed.skills as Record<string, unknown>[],
+      skills: skillsForAnthropic(parsed.skills),
     });
     anthropicId = created.id;
     anthropicVersion = created.version ?? 1;
@@ -80,6 +115,7 @@ router.post("/", async (req) => {
       mcp_servers: parsed.mcp_servers,
       outcome: parsed.outcome ?? null,
       brain: parsed.brain,
+      default_resources: parsed.default_resources ?? { kb_file_ids: [], memory_store_ids: [] },
       created_by: user.id,
     })
     .select()
@@ -115,8 +151,16 @@ router.patch("/:id", async (req, params) => {
       if (parsed.system_prompt !== undefined) updateInput.system = parsed.system_prompt;
       if (parsed.model !== undefined) updateInput.model = parsed.model;
       if (parsed.name !== undefined) updateInput.name = parsed.name;
-      if (parsed.tools !== undefined) updateInput.tools = parsed.tools;
-      if (parsed.skills !== undefined) updateInput.skills = parsed.skills;
+      // Always re-sync the toolset so existing agents pick up new built-in
+      // tools (kb_*). Caller-provided tools take precedence; otherwise we
+      // round-trip whatever the local row already had.
+      const baseTools = parsed.tools !== undefined
+        ? parsed.tools
+        : ((existing.tools as unknown[] | null) ?? []);
+      updateInput.tools = withKbTools(
+        baseTools.length ? baseTools : [{ type: "agent_toolset_20260401" }],
+      );
+      if (parsed.skills !== undefined) updateInput.skills = skillsForAnthropic(parsed.skills);
       if (parsed.mcp_servers !== undefined) updateInput.mcp_servers = parsed.mcp_servers;
       const updated = await AnthropicAgents.update(
         existing.anthropic_id,

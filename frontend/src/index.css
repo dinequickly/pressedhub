@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    font-feature-settings: "cv11", "ss01", "ss03";
+    letter-spacing: -0.01em;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white border border-neutral-200 rounded-xl shadow-soft;
+  }
+  .pill {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-mono bg-neutral-100 text-ink-500;
+  }
+  .btn {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors;
+  }
+  .btn-primary {
+    @apply btn bg-ink-900 text-white hover:bg-ink-700;
+  }
+  .btn-ghost {
+    @apply btn text-ink-700 hover:bg-neutral-100;
+  }
+  .btn-danger {
+    @apply btn bg-rose-50 text-rose-600 hover:bg-rose-100;
+  }
+  .input {
+    @apply w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white text-sm placeholder:text-ink-300 focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100;
+  }
+  .label {
+    @apply text-xs font-medium text-ink-500 uppercase tracking-wide;
+  }
+  .section-heading {
+    @apply text-[11px] font-medium text-ink-500 uppercase tracking-wider px-3 pt-4 pb-1;
+  }
+}
+
+/* Tiptap markdown editor surface. Mirrors the SkillPreview look so toggling
+   between draft and edit doesn't shift the layout. */
+.tiptap-prose {
+  @apply text-sm leading-relaxed text-ink-700;
+}
+.tiptap-prose > * + * { @apply mt-3; }
+.tiptap-prose h1 { @apply text-2xl font-semibold mt-2; }
+.tiptap-prose h2 { @apply text-lg font-semibold mt-4; }
+.tiptap-prose h3 { @apply text-base font-semibold mt-3; }
+.tiptap-prose p { @apply leading-relaxed; }
+.tiptap-prose ul { @apply list-disc pl-5 space-y-0.5; }
+.tiptap-prose ol { @apply list-decimal pl-5 space-y-0.5; }
+.tiptap-prose code { @apply bg-neutral-100 px-1 rounded text-xs font-mono; }
+.tiptap-prose pre {
+  @apply bg-neutral-100 rounded-md p-3 text-xs font-mono whitespace-pre-wrap overflow-x-auto;
+}
+.tiptap-prose pre code { @apply bg-transparent p-0; }
+.tiptap-prose blockquote { @apply border-l-2 border-neutral-200 pl-3 text-ink-500; }
+.tiptap-prose strong { @apply font-semibold; }
+.tiptap-prose a { @apply text-violet-600 underline; }
+.tiptap-prose hr { @apply border-neutral-200 my-4; }
+/* Placeholder for empty editor — `@tiptap/extension-placeholder` adds the
+   `is-editor-empty` class to the first child while the doc is empty and
+   exposes the placeholder text on `data-placeholder`. */
+.tiptap-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply text-ink-300 pointer-events-none float-left h-0;
+}
+
+/* Assistant message markdown (marked.js output). Scoped to chat bubbles so
+   the global layout isn't affected. */
+.markdown-body > :first-child { @apply mt-0; }
+.markdown-body > :last-child { @apply mb-0; }
+.markdown-body h1, .markdown-body h2 { @apply text-base font-semibold mt-3 mb-1; }
+.markdown-body h3 { @apply text-sm font-semibold mt-2 mb-1; }
+.markdown-body p { @apply leading-relaxed my-1.5; }
+.markdown-body ul { @apply list-disc pl-5 space-y-0.5 my-1.5; }
+.markdown-body ol { @apply list-decimal pl-5 space-y-0.5 my-1.5; }
+.markdown-body li { @apply leading-relaxed; }
+.markdown-body code { @apply bg-neutral-100 px-1 rounded text-[12px] font-mono; }
+.markdown-body pre {
+  @apply bg-neutral-100 rounded-md p-2.5 text-xs font-mono whitespace-pre overflow-x-auto my-2;
+}
+.markdown-body pre code { @apply bg-transparent p-0 text-[12px]; }
+.markdown-body blockquote { @apply border-l-2 border-neutral-200 pl-3 text-ink-500 my-1.5; }
+.markdown-body strong { @apply font-semibold; }
+.markdown-body em { @apply italic; }
+.markdown-body a { @apply text-violet-600 underline; }
+.markdown-body hr { @apply border-neutral-200 my-3; }
+.markdown-body table { @apply border border-neutral-200 rounded-md text-xs my-2; }
+.markdown-body th { @apply px-2 py-1 bg-neutral-50 text-left font-semibold border-b border-neutral-200; }
+.markdown-body td { @apply px-2 py-1 border-b border-neutral-100; }

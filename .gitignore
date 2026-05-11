@@ -5,8 +5,13 @@ node_modules/
 supabase/.branches/
 supabase/.temp/
 supabase/.env
+supabase/functions/.env
 supabase/seed/.generated.sql
 *.log
 .vscode/
 .idea/
 dist/
+
+# Campaign harness output (run reports + cached harness-user credentials)
+scripts/.out/*
+!scripts/.out/.gitkeep

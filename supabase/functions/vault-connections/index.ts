@@ -18,6 +18,20 @@ import { writeAudit } from "../_shared/audit.ts";
 
 const router = new Router("vault-connections");
 
+// Strip secrets from metadata before sending it to the browser. The row
+// itself is RLS-gated, but there's no reason for a long-lived token to
+// pass through a fetch — server-side handlers (slack-events, custom Slack
+// tools at session start) read directly from the DB.
+const SENSITIVE_META_KEYS = new Set(["bot_token", "access_token", "refresh_token"]);
+function maskMetadata(row: Record<string, unknown>): Record<string, unknown> {
+  const meta = (row.metadata as Record<string, unknown>) ?? {};
+  const safeMeta: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(meta)) {
+    safeMeta[k] = SENSITIVE_META_KEYS.has(k) ? (v ? "<set>" : null) : v;
+  }
+  return { ...row, metadata: safeMeta };
+}
+
 router.get("/", async (req) => {
   const user = await requireUser(req);
   const { data, error } = await user.db
@@ -25,7 +39,7 @@ router.get("/", async (req) => {
     .select("*")
     .order("updated_at", { ascending: false });
   if (error) throw new Error(error.message);
-  return ok({ data });
+  return ok({ data: (data ?? []).map((r) => maskMetadata(r as Record<string, unknown>)) });
 });
 
 router.get("/:id", async (req, params) => {
@@ -34,7 +48,7 @@ router.get("/:id", async (req, params) => {
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new NotFound("Connection not found");
-  return ok(data);
+  return ok(maskMetadata(data as Record<string, unknown>));
 });
 
 router.post("/", async (req) => {
@@ -50,8 +64,11 @@ router.post("/", async (req) => {
     .limit(1)
     .maybeSingle();
 
+  // Lazily create the Anthropic vault only when there's a credential to put
+  // in it. Recording a connection without auth is a local-only operation —
+  // useful for showing the row in the UI before the user finishes OAuth.
   let vaultId = anyExisting?.anthropic_vault_id as string | undefined;
-  if (!vaultId) {
+  if (!vaultId && parsed.auth) {
     try {
       const v = await AnthropicVaults.create({
         display_name: user.email,
@@ -100,6 +117,47 @@ router.post("/", async (req) => {
     resource_id: row.id,
   });
   return ok(row, 201);
+});
+
+// Patch the row's mutable fields. Used by the Connections UI to set
+// `metadata.default_agent_id` for Slack — i.e. which agent should answer
+// when this workspace's bot is @-mentioned. Auth payload + Anthropic
+// vault/credential ids are NOT writable here on purpose. Metadata writes
+// are MERGED into the existing object and restricted to a whitelist so the
+// UI can never overwrite the bot_token or team_id from the OAuth callback.
+const PATCHABLE_META_KEYS = new Set(["default_agent_id"]);
+
+router.patch("/:id", async (req, params) => {
+  const user = await requireUser(req);
+  const body = await readJson<{
+    account_label?: string;
+    metadata?: Record<string, unknown>;
+  }>(req);
+  const patch: Record<string, unknown> = {};
+  if (typeof body.account_label === "string") patch.account_label = body.account_label;
+  if (body.metadata && typeof body.metadata === "object") {
+    const { data: existing } = await user.db
+      .from("vault_connections").select("metadata").eq("id", params.id).maybeSingle();
+    if (!existing) throw new NotFound("Connection not found");
+    const merged = { ...((existing.metadata as Record<string, unknown>) ?? {}) };
+    for (const [k, v] of Object.entries(body.metadata)) {
+      if (!PATCHABLE_META_KEYS.has(k)) continue;
+      if (v === null || v === undefined || v === "") delete merged[k];
+      else merged[k] = v;
+    }
+    patch.metadata = merged;
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new BadRequest("Nothing to update");
+  }
+  const { data, error } = await user.db
+    .from("vault_connections").update(patch).eq("id", params.id).select().single();
+  if (error) throw new BadRequest(error.message);
+  await writeAudit({
+    actor_id: user.id, action: "vault_connection.update",
+    resource_type: "vault_connection", resource_id: params.id,
+  });
+  return ok(maskMetadata(data as Record<string, unknown>));
 });
 
 router.post("/:id/check", async (req, params) => {

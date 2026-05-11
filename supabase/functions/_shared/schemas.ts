@@ -30,6 +30,47 @@ export const OutcomeSchema = z.object({
   max_iterations: z.number().int().min(1).max(20).optional(),
 });
 
+// -- Vibe boards (Image Creator app) -------------------------------------
+
+// Loose item schema — the frontend owns the rich shape. We just guarantee
+// each item has an id and a type so the agent's update_board tool can
+// safely reference items by id.
+export const VibeBoardItemSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum(["image", "prompt", "reference", "note"]),
+}).passthrough();
+
+export const VibeBoardStateSchema = z.object({
+  items: z.array(VibeBoardItemSchema).default([]),
+}).passthrough();
+
+export const VibeBoardCreateSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  state: VibeBoardStateSchema.optional(),
+});
+
+export const VibeBoardPatchSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  state: VibeBoardStateSchema.optional(),
+  session_id: z.string().uuid().nullable().optional(),
+});
+
+// Inline image gen request from a prompt card. Picks the vendor and how many
+// variants to render in one shot. The endpoint stores blobs in /media and
+// returns a Generation[] the canvas can hang off the prompt item.
+export const VibeBoardGenerateSchema = z.object({
+  prompt: z.string().min(1).max(8000),
+  // Granular models: gemini-fast (3.1-flash-image-preview), gemini-quality
+  // (3-pro-image-preview), openai (gpt-image-1). Legacy `gemini` accepted
+  // and treated as gemini-fast for backwards compatibility.
+  model: z.enum(["openai", "gemini", "gemini-fast", "gemini-quality"]),
+  n: z.number().int().min(1).max(4).optional(),
+  // Optional reference image attachments — media_assets ids the user has
+  // attached to the prompt. The endpoint downloads each and passes the
+  // bytes to the gen vendor as references.
+  attachments: z.array(z.string().uuid()).max(8).optional(),
+});
+
 const NodeBase = { id: z.string().min(1) };
 
 export const TriggerNodeSchema = z.object({
@@ -108,8 +149,15 @@ export const AgentCreateSchema = z.object({
   tools: z.array(z.unknown()).default([]),
   skills: z.array(z.unknown()).default([]),
   mcp_servers: z.array(z.unknown()).default([]),
-  outcome: OutcomeSchema.optional(),
+  outcome: OutcomeSchema.nullable().optional(),
   brain: z.array(z.unknown()).default([]),
+  default_resources: z.object({
+    kb_file_ids: z.array(z.string().uuid()).default([]),
+    memory_store_ids: z.array(z.string().uuid()).default([]),
+    // Filenames (or name substrings) to always attach. Resolved to file IDs
+    // at session-creation time so they survive file re-uploads.
+    pinned_kb_names: z.array(z.string().min(1)).default([]),
+  }).optional(),
 });
 
 export const AgentUpdateSchema = AgentCreateSchema.partial();
@@ -131,6 +179,10 @@ export const SessionStartSchema = z.object({
   agent_id: z.string().uuid(),
   environment_id: z.string().uuid(),
   vault_connection_ids: z.array(z.string().uuid()).optional(),
+  // Local IDs we resolve to Anthropic file_ids / memory_store_ids server-side
+  // and forward as `resources` on session create.
+  kb_file_ids: z.array(z.string().uuid()).optional(),
+  memory_store_ids: z.array(z.string().uuid()).optional(),
   title: z.string().optional(),
   initial_message: z.string().optional(),
   outcome: OutcomeSchema.optional(),
@@ -175,6 +227,19 @@ export const SkillCreateSchema = z.object({
 });
 
 export const SkillUpdateSchema = SkillCreateSchema.partial();
+
+export const SkillDraftSchema = z.object({
+  messages: z.array(z.object({
+    role: z.enum(["user", "assistant"]),
+    content: z.string(),
+  })).min(1),
+  current_md: z.string().default(""),
+});
+
+export const SkillTestRunSchema = z.object({
+  content_md: z.string().min(1),
+  prompt: z.string().min(1),
+});
 
 // -- Vault connections ---------------------------------------------------
 
@@ -243,7 +308,7 @@ export const DreamDecideSchema = z.object({
 // -- KB ------------------------------------------------------------------
 
 export const KbUploadUrlSchema = z.object({
-  folder_id: z.string().uuid().optional(),
+  folder_id: z.string().uuid().nullable().optional(),
   name: z.string().min(1),
   mime: z.string().default("application/octet-stream"),
   size_bytes: z.number().int().min(0).default(0),

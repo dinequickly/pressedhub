@@ -1,0 +1,697 @@
+// /chat — Conversation surface for talking to agents. List of recent chats
+// on the left, full event stream + composer on the right. The session list
+// hits the same /sessions endpoint as /runs; the difference is what we show
+// and how (chat-first vs engineering-first).
+
+import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import {
+  LuPlus, LuBan, LuSend, LuPanelRight, LuFile, LuFileText,
+  LuFileSpreadsheet, LuImage, LuFileCode, LuPresentation, LuPaperclip,
+  LuDownload, LuExternalLink,
+} from "react-icons/lu";
+import type { IconType } from "react-icons";
+import { api, type Agent, type Environment, type RunOutput, type Session, type SessionEvent } from "../lib/api";
+import { refresh, useApi } from "../lib/swr";
+import { EmptyState, Modal, Page, StatusPill } from "../components/Page";
+import { OutputPreview } from "../components/OutputPreview";
+import { ChatStream, JuiceLoader, LiveActivity } from "../components/ChatEvents";
+import { FN_URL, supabase } from "../lib/supabase";
+import { humanizeBytes, relativeTime } from "../lib/format";
+
+export function ChatPage() {
+  const { sessionId } = useParams<{ sessionId?: string }>();
+  const nav = useNavigate();
+  const { data: sessions } = useApi<{ data: Session[] }>("/sessions", {
+    refreshInterval: 5000,
+  });
+  const [creating, setCreating] = useState(false);
+
+  const list = sessions?.data ?? [];
+  const selectedId = sessionId ?? list[0]?.id ?? null;
+
+  return (
+    <Page
+      title="Chat"
+      subtitle="Conversations with your agents"
+      actions={
+        <button className="btn-primary" onClick={() => setCreating(true)}>
+          <LuPlus className="size-4" /> New chat
+        </button>
+      }
+    >
+      <div className="h-full grid grid-cols-[280px_1fr]">
+        <div className="border-r border-neutral-200 overflow-y-auto p-2">
+          {!list.length ? (
+            <EmptyState title="No chats yet" />
+          ) : groupSessionsByDate(list).map((group) => (
+            <div key={group.label} className="mb-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-400 px-3 mb-1">
+                {group.label}
+              </div>
+              {group.sessions.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => nav(`/chat/${s.id}`)}
+                  className={[
+                    "w-full text-left px-3 py-2 rounded-lg flex items-start gap-2 transition-colors",
+                    selectedId === s.id ? "bg-violet-50" : "hover:bg-neutral-100",
+                  ].join(" ")}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="text-sm font-medium truncate">{s.title ?? "Untitled"}</div>
+                      <StatusPill status={s.status} />
+                    </div>
+                    <div className="text-[11px] text-ink-500 truncate">
+                      {relativeTime(s.started_at)}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="overflow-hidden">
+          {selectedId ? (
+            <ChatSurface sessionId={selectedId} />
+          ) : (
+            <EmptyState title="Start a chat" body="Pick a conversation or click New chat" />
+          )}
+        </div>
+      </div>
+
+      <NewChatModal open={creating} onClose={() => setCreating(false)} />
+    </Page>
+  );
+}
+
+function ChatSurface({ sessionId }: { sessionId: string }) {
+  const { data, mutate } = useApi<{ session: Session; events: SessionEvent[]; outputs?: RunOutput[] }>(
+    `/runs/${sessionId}`,
+    // Poll faster while the agent is actively producing events. SWR accepts
+    // a function so we can react to the latest status without re-subscribing.
+    {
+      refreshInterval: (latest) => latest?.session?.status === "running" ? 1500 : 4000,
+      dedupingInterval: 800,
+    },
+  );
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(true);
+  const [previewing, setPreviewing] = useState<RunOutput | null>(null);
+  // Events the user just sent that haven't shown up in the polled response
+  // yet. We splice these onto the rendered list so the UI feels instant. Each
+  // optimistic entry is keyed by a temp id and dropped once a real event with
+  // matching text arrives.
+  const [optimistic, setOptimistic] = useState<SessionEvent[]>([]);
+  const eventsRef = useRef<HTMLDivElement>(null);
+
+  const status = data?.session?.status;
+  const realEvents = data?.events ?? [];
+
+  // Drop optimistic events once the real one arrives. Match on user.message
+  // payloads by text since the temp id won't match.
+  useEffect(() => {
+    if (optimistic.length === 0) return;
+    const realTexts = new Set<string>();
+    for (const e of realEvents) {
+      if (e.event_type !== "user.message") continue;
+      const c = ((e.payload ?? {}) as Record<string, unknown>).content;
+      if (Array.isArray(c)) {
+        for (const b of c) {
+          const t = (b as Record<string, unknown> | undefined)?.text;
+          if (typeof t === "string") realTexts.add(t);
+        }
+      }
+    }
+    if (realTexts.size === 0) return;
+    setOptimistic((prev) => prev.filter((o) => {
+      const c = ((o.payload ?? {}) as Record<string, unknown>).content;
+      if (!Array.isArray(c)) return true;
+      for (const b of c) {
+        const t = (b as Record<string, unknown> | undefined)?.text;
+        if (typeof t === "string" && realTexts.has(t)) return false;
+      }
+      return true;
+    }));
+  }, [realEvents]);
+
+  // Attach to the session SSE stream while the agent is running. The backend
+  // stream proxy persists events to session_events as they arrive from
+  // Anthropic, then we re-fetch (SWR dedupes). This collapses the
+  // user-sends-message → agent-replies latency from a poll cycle to ~real
+  // time — without it we'd wait up to refreshInterval + the background-fetch
+  // round-trip every turn.
+  useEffect(() => {
+    if (status !== "running") return;
+    let cancelled = false;
+    let abort: AbortController | null = null;
+    (async () => {
+      try {
+        const { data: sessData } = await supabase.auth.getSession();
+        const jwt = sessData.session?.access_token;
+        abort = new AbortController();
+        const res = await fetch(`${FN_URL}/sessions/${sessionId}/stream`, {
+          headers: {
+            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${jwt}`,
+            Accept: "text/event-stream",
+          },
+          signal: abort.signal,
+        });
+        if (!res.body || cancelled) return;
+        const reader = res.body.getReader();
+        while (!cancelled) {
+          const { done } = await reader.read();
+          if (done) break;
+          // Pull a fresh snapshot from the DB — dedupingInterval throttles.
+          mutate();
+        }
+      } catch {
+        // Stream errored or aborted — fall back to plain polling.
+      }
+    })();
+    return () => { cancelled = true; abort?.abort(); };
+  }, [status, sessionId, mutate]);
+
+  // Auto-scroll only when the user is already near the bottom — otherwise
+  // we'd yank them away from what they were reading every time an event
+  // arrived. 60px tolerance covers "basically at the bottom" without
+  // counting "scrolled up to read."
+  useEffect(() => {
+    const el = eventsRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distance < 60) el.scrollTop = el.scrollHeight;
+  }, [realEvents.length, optimistic.length]);
+
+  const events = useMemo(() => [...realEvents, ...optimistic], [realEvents, optimistic]);
+  const attached = useMemo(() => collectAttachedFiles(events), [events]);
+
+  if (!data) return <div className="p-6"><JuiceLoader /></div>;
+  const { session } = data;
+  const terminated = session.status === "terminated";
+
+  async function sendText(text: string) {
+    if (!text.trim() || sending) return;
+    setSending(true);
+    const optimisticId = `optimistic-${Date.now()}`;
+    setOptimistic((prev) => [...prev, {
+      id: optimisticId,
+      session_id: sessionId,
+      anthropic_event_id: null,
+      event_type: "user.message",
+      payload: { content: [{ type: "text", text }] },
+      processed_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    } as SessionEvent]);
+    try {
+      await api.post(`/sessions/${sessionId}/events`, {
+        events: [{ type: "user.message", content: [{ type: "text", text }] }],
+      });
+      mutate();
+    } catch (err) {
+      // Roll back the optimistic message if the post failed.
+      setOptimistic((prev) => prev.filter((o) => o.id !== optimisticId));
+      alert(`Send failed: ${(err as Error).message}`);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function send() {
+    if (!message.trim()) return;
+    const text = message;
+    setMessage("");
+    await sendText(text);
+  }
+
+  async function retry() {
+    // Re-send the most recent user message verbatim. Managed Agents can't
+    // truncate the assistant's last turn, so the agent will respond again as
+    // a fresh turn — closest analog to "regenerate".
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].event_type === "user.message") {
+        const c = (events[i].payload as Record<string, unknown> | undefined)?.content;
+        let text = "";
+        if (Array.isArray(c)) {
+          for (const b of c) {
+            if (b && typeof b === "object" && typeof (b as Record<string, unknown>).text === "string") {
+              text += (b as Record<string, unknown>).text as string;
+            }
+          }
+        }
+        if (text) { await sendText(text); return; }
+      }
+    }
+  }
+
+  async function interrupt() {
+    if (!confirm("Interrupt this conversation?")) return;
+    await api.post(`/sessions/${sessionId}/interrupt`);
+    mutate();
+  }
+
+  const outputs = data.outputs ?? [];
+  const totalFiles = outputs.length + attached.length;
+
+  // Resolve a file chip's path to something we can open. Anthropic doesn't
+  // expose arbitrary container files via API — we can only preview things
+  // that already exist as Anthropic Files (outputs) or as attached KB rows.
+  // Match by basename and open the right surface; otherwise just pop the
+  // Files panel so the user sees what's available.
+  function openFile(path: string) {
+    const base = (path.split("/").filter(Boolean).pop() ?? path).toLowerCase();
+    const output = outputs.find((o) => (o.name ?? "").toLowerCase() === base);
+    if (output) {
+      setPreviewing(output);
+      setFilesOpen(true);
+      return;
+    }
+    const kb = attached.find((a) => a.file_name.toLowerCase() === base);
+    if (kb?.kb_file_id) {
+      window.open(`/knowledge?file=${kb.kb_file_id}`, "_blank", "noopener");
+      return;
+    }
+    setFilesOpen(true);
+  }
+
+  return (
+    <div className="h-full flex">
+      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="border-b border-neutral-200 px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <h2 className="text-base font-semibold truncate">{session.title ?? "Untitled"}</h2>
+          <StatusPill status={session.status} />
+        </div>
+        <div className="flex items-center gap-2">
+          {!terminated && (
+            <button className="btn-ghost" onClick={interrupt}>
+              <LuBan className="size-3.5" /> Stop
+            </button>
+          )}
+          <button
+            className="btn-ghost"
+            onClick={() => setFilesOpen((v) => !v)}
+            title={filesOpen ? "Hide files" : "Show files"}
+          >
+            <LuPanelRight className="size-3.5" />
+            Files{totalFiles > 0 ? ` · ${totalFiles}` : ""}
+          </button>
+        </div>
+      </div>
+
+      <div ref={eventsRef} className="flex-1 overflow-y-auto px-6 py-5 space-y-3 bg-neutral-100">
+        {events.length === 0 ? (
+          <div className="text-sm text-ink-500">Say something to get started…</div>
+        ) : (
+          <ChatErrorBoundary>
+            <ChatStream events={events} onRetry={retry} onOpenFile={openFile} />
+          </ChatErrorBoundary>
+        )}
+        {session.status === "running" && <LiveActivity events={events} />}
+      </div>
+
+      <div className="border-t border-neutral-200 px-6 py-3 flex gap-2 bg-white">
+        <input
+          className="input"
+          placeholder={terminated ? "This chat ended." : "Message your agent…"}
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          disabled={terminated || sending}
+        />
+        <button
+          className="btn-primary"
+          onClick={send}
+          disabled={!message.trim() || terminated || sending}
+        >
+          <LuSend className="size-3.5" /> Send
+        </button>
+      </div>
+      </div>
+      {filesOpen && (
+        <FilesPanel
+          sessionId={sessionId}
+          outputs={outputs}
+          attached={attached}
+          previewing={previewing}
+          setPreviewing={setPreviewing}
+        />
+      )}
+    </div>
+  );
+}
+
+// Walks events for kb_attach custom-tool results. Each kb_attach result is a
+// JSON-stringified `{attached, file_name, mount_path, ...}` payload, sent as
+// user.custom_tool_result. Dedupes by mount_path.
+type AttachedFile = {
+  file_name: string;
+  mount_path: string | null;
+  kb_file_id: string | null;
+};
+
+// Group sessions into "Today / Yesterday / This week / Older" buckets based
+// on started_at. Sessions inside each group stay newest-first.
+// Error boundary so a single malformed event payload doesn't blank out the
+// chat. We surface a small inline notice instead of unmounting the surface.
+class ChatErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[chat] render error:", error, info.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-3">
+          Something glitched while rendering this conversation. Reload to retry.
+          <pre className="mt-2 text-[11px] font-mono text-rose-600 whitespace-pre-wrap">
+            {this.state.error.message}
+          </pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function groupSessionsByDate(sessions: Session[]): Array<{ label: string; sessions: Session[] }> {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+  const startOfWeek = startOfToday - 7 * 24 * 60 * 60 * 1000;
+  const startOfMonth = startOfToday - 30 * 24 * 60 * 60 * 1000;
+  const buckets: Record<string, Session[]> = {
+    Today: [], Yesterday: [], "This week": [], "This month": [], Older: [],
+  };
+  for (const s of sessions) {
+    const t = new Date(s.started_at).getTime();
+    if (t >= startOfToday) buckets["Today"].push(s);
+    else if (t >= startOfYesterday) buckets["Yesterday"].push(s);
+    else if (t >= startOfWeek) buckets["This week"].push(s);
+    else if (t >= startOfMonth) buckets["This month"].push(s);
+    else buckets["Older"].push(s);
+  }
+  return Object.entries(buckets)
+    .filter(([, ss]) => ss.length > 0)
+    .map(([label, ss]) => ({ label, sessions: ss }));
+}
+
+function collectAttachedFiles(events: SessionEvent[]): AttachedFile[] {
+  const byPath = new Map<string, AttachedFile>();
+  // Build a tool_use_id → kb_file_id lookup from kb_attach invocations, so we
+  // can carry the kb_file_id forward onto the result row.
+  const idToKbFile = new Map<string, string>();
+  for (const e of events) {
+    if (e.event_type !== "agent.custom_tool_use") continue;
+    const p = (e.payload ?? {}) as Record<string, unknown>;
+    if (p.name !== "kb_attach") continue;
+    const id = (p.id ?? p.tool_use_id) as string | undefined;
+    const kbId = ((p.input as Record<string, unknown>) ?? {}).kb_file_id;
+    if (id && typeof kbId === "string") idToKbFile.set(id, kbId);
+  }
+  for (const e of events) {
+    if (e.event_type !== "user.custom_tool_result") continue;
+    const p = (e.payload ?? {}) as Record<string, unknown>;
+    const useId = (p.custom_tool_use_id ?? p.tool_use_id) as string | undefined;
+    const content = p.content;
+    let text = "";
+    if (typeof content === "string") text = content;
+    else if (Array.isArray(content)) {
+      for (const b of content) {
+        if (b && typeof b === "object" && typeof (b as Record<string, unknown>).text === "string") {
+          text += (b as Record<string, unknown>).text as string;
+        }
+      }
+    }
+    if (!text || !text.includes("attached")) continue;
+    try {
+      const obj = JSON.parse(text) as Record<string, unknown>;
+      if (obj.attached !== true || typeof obj.file_name !== "string") continue;
+      const mount = typeof obj.mount_path === "string" ? obj.mount_path : null;
+      const key = mount ?? (obj.file_name as string);
+      if (byPath.has(key)) continue;
+      byPath.set(key, {
+        file_name: obj.file_name as string,
+        mount_path: mount,
+        kb_file_id: useId ? (idToKbFile.get(useId) ?? null) : null,
+      });
+    } catch {
+      // Not a JSON-attached result — skip.
+    }
+  }
+  return Array.from(byPath.values());
+}
+
+function iconFor(name: string | null | undefined, mime?: string | null): IconType {
+  const lower = (name ?? "").toLowerCase();
+  const ext = lower.includes(".") ? lower.slice(lower.lastIndexOf(".") + 1) : "";
+  const m = (mime ?? "").toLowerCase();
+  if (m.startsWith("image/") || ["png", "jpg", "jpeg", "svg", "webp", "gif"].includes(ext)) return LuImage;
+  if (ext === "xlsx" || ext === "csv" || m.includes("spreadsheetml")) return LuFileSpreadsheet;
+  if (ext === "pptx" || m.includes("presentationml")) return LuPresentation;
+  if (ext === "json" || m === "application/json") return LuFileCode;
+  if (ext === "md" || ext === "txt" || ext === "docx" || ext === "pdf") return LuFileText;
+  return LuFile;
+}
+
+function FilesPanel({
+  sessionId, outputs, attached, previewing, setPreviewing,
+}: {
+  sessionId: string;
+  outputs: RunOutput[];
+  attached: AttachedFile[];
+  previewing: RunOutput | null;
+  setPreviewing: (o: RunOutput | null) => void;
+}) {
+  const empty = outputs.length === 0 && attached.length === 0;
+
+  return (
+    <aside className="w-72 shrink-0 border-l border-neutral-200 bg-white flex flex-col overflow-hidden">
+      <div className="px-4 py-3 border-b border-neutral-200">
+        <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">Files</div>
+        <div className="text-[11px] text-ink-500">
+          {empty ? "None yet" : `${outputs.length + attached.length} in this chat`}
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-2 space-y-3">
+        {attached.length > 0 && (
+          <Section title="Attached">
+            {attached.map((f) => (
+              <FileRow
+                key={f.mount_path ?? f.file_name}
+                Icon={LuPaperclip}
+                tint="violet"
+                name={f.file_name}
+                hint={f.mount_path ?? "in session"}
+                onClick={f.kb_file_id
+                  ? () => window.open(`/knowledge?file=${f.kb_file_id}`, "_blank", "noopener")
+                  : undefined}
+                rightIcon={f.kb_file_id ? LuExternalLink : undefined}
+              />
+            ))}
+          </Section>
+        )}
+        {outputs.length > 0 && (
+          <Section title="Produced">
+            {outputs.map((o) => {
+              const Icon = iconFor(o.name, o.mime);
+              return (
+                <FileRow
+                  key={o.file_id}
+                  Icon={Icon}
+                  tint="amber"
+                  name={o.name ?? o.file_id}
+                  hint={`${o.mime ?? "—"}${o.size != null ? ` · ${humanizeBytes(o.size)}` : ""}`}
+                  onClick={() => setPreviewing(o)}
+                  onDownload={() => downloadOutput(sessionId, o)}
+                />
+              );
+            })}
+          </Section>
+        )}
+        {empty && (
+          <div className="text-xs text-ink-500 px-2 py-4">
+            Nothing attached or produced yet. KB files the agent calls <code>kb_attach</code> on and any files it generates will show up here.
+          </div>
+        )}
+      </div>
+      {previewing && (
+        <Modal open onClose={() => setPreviewing(null)} title={previewing.name ?? previewing.file_id}>
+          <div className="h-[70vh] -m-5">
+            <OutputPreview sessionId={sessionId} output={previewing} />
+          </div>
+        </Modal>
+      )}
+    </aside>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-400 px-2 mb-1">
+        {title}
+      </div>
+      <div className="space-y-1">{children}</div>
+    </div>
+  );
+}
+
+function FileRow({
+  Icon, tint, name, hint, onClick, onDownload, rightIcon: RightIcon,
+}: {
+  Icon: IconType;
+  tint: "violet" | "amber";
+  name: string;
+  hint: string;
+  onClick?: () => void;
+  onDownload?: () => void;
+  rightIcon?: IconType;
+}) {
+  const cls = tint === "violet"
+    ? "bg-violet-50 text-violet-500"
+    : "bg-amber-50 text-amber-500";
+  return (
+    <div className="group flex items-start gap-1 px-2 py-2 rounded-lg hover:bg-neutral-100">
+      <button
+        onClick={onClick}
+        disabled={!onClick}
+        className="text-left flex items-start gap-2 min-w-0 flex-1 disabled:cursor-default"
+      >
+        <div className={`size-7 rounded-lg ${cls} grid place-items-center mt-0.5 shrink-0`}>
+          <Icon className="size-3.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium truncate">{name}</div>
+          <div className="text-[11px] text-ink-500 font-mono truncate">{hint}</div>
+        </div>
+        {RightIcon && <RightIcon className="size-3.5 text-ink-400 mt-1 shrink-0" />}
+      </button>
+      {onDownload && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onDownload(); }}
+          title="Download"
+          className="p-1.5 rounded text-ink-400 hover:text-ink-700 hover:bg-neutral-200 opacity-0 group-hover:opacity-100 transition-opacity"
+        >
+          <LuDownload className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Download a session output through our auth'd proxy. Uses an off-DOM anchor
+// so the browser respects the `download` attribute.
+async function downloadOutput(sessionId: string, output: RunOutput): Promise<void> {
+  try {
+    const { data: sessData } = await supabase.auth.getSession();
+    const jwt = sessData.session?.access_token;
+    const url = `${FN_URL}/sessions/${sessionId}/files/${output.file_id}?download=1`;
+    const res = await fetch(url, {
+      headers: {
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${jwt}`,
+      },
+    });
+    if (!res.ok) throw new Error(`download ${res.status}`);
+    const blob = await res.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objUrl;
+    a.download = output.name ?? output.file_id;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objUrl);
+  } catch (err) {
+    alert(`Download failed: ${(err as Error).message}`);
+  }
+}
+
+function NewChatModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const nav = useNavigate();
+  const { data: agents } = useApi<{ data: Agent[] }>(open ? "/agents" : null);
+  const { data: envs } = useApi<{ data: Environment[] }>(open ? "/environments" : null);
+  const [agentId, setAgentId] = useState("");
+  const [envId, setEnvId] = useState("");
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Default to the first env so the user doesn't have to think about it for
+  // the common case of a single shared environment.
+  useEffect(() => {
+    if (!envId && envs?.data?.length) setEnvId(envs.data[0].id);
+  }, [envs?.data, envId]);
+
+  return (
+    <Modal
+      open={open} onClose={onClose} title="New chat"
+      footer={
+        <div className="flex justify-end gap-2">
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button
+            className="btn-primary" disabled={!agentId || !envId || busy}
+            onClick={async () => {
+              setBusy(true); setErr(null);
+              try {
+                const created = await api.post<Session>("/sessions", {
+                  agent_id: agentId, environment_id: envId, title,
+                  initial_message: message || undefined,
+                });
+                refresh("/sessions");
+                onClose();
+                setTitle(""); setMessage(""); setAgentId("");
+                nav(`/chat/${created.id}`);
+              } catch (e) { setErr((e as Error).message); }
+              finally { setBusy(false); }
+            }}
+          >
+            Start
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <div>
+          <label className="label block mb-1">Agent</label>
+          <select className="input" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
+            <option value="">Pick an agent…</option>
+            {(agents?.data ?? []).map((a) => (
+              <option key={a.id} value={a.id}>{a.emoji} {a.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label block mb-1">Environment</label>
+          <select className="input" value={envId} onChange={(e) => setEnvId(e.target.value)}>
+            <option value="">Pick an environment…</option>
+            {(envs?.data ?? []).map((e) => (
+              <option key={e.id} value={e.id}>{e.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label block mb-1">Title (optional)</label>
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
+        </div>
+        <div>
+          <label className="label block mb-1">First message</label>
+          <textarea
+            className="input"
+            rows={3}
+            placeholder="What do you want help with?"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+          />
+        </div>
+        {err && <div className="text-rose-600 text-sm">{err}</div>}
+      </div>
+    </Modal>
+  );
+}

@@ -1,4 +1,15 @@
 // /functions/v1/apps
+//
+// DEPRECATED — superseded by the in-tree Apps framework at
+// frontend/src/apps/. The hub's frontend no longer calls this endpoint or
+// uses the `apps` table; both are kept only because smoke-phase-f exercises
+// them. Cleanup plan (see To-Do.md → "Apps backend cleanup"):
+//   1. Update smoke-phase-f to drop the apps section
+//   2. Drop this file
+//   3. Write a migration to drop the `apps` + `app_deployments` tables
+//
+// Until that lands this file is harmless dead code.
+//
 //   GET    /                List apps visible to the caller.
 //   POST   /                Create.
 //   GET    /:id             Get one.
