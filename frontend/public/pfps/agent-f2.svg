@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <rect width="200" height="200" fill="#9fa8d0"/>
+  <!-- head -->
+  <ellipse cx="100" cy="68" rx="33" ry="37" fill="white"/>
+  <!-- longer hair left -->
+  <ellipse cx="67" cy="76" rx="11" ry="28" fill="white" transform="rotate(-6,67,76)"/>
+  <!-- longer hair right -->
+  <ellipse cx="133" cy="76" rx="11" ry="28" fill="white" transform="rotate(6,133,76)"/>
+  <!-- top hair volume -->
+  <ellipse cx="100" cy="36" rx="28" ry="14" fill="white"/>
+  <!-- shoulders / body -->
+  <path d="M28 200 Q50 128 100 118 Q150 128 172 200 Z" fill="white"/>
+  <!-- neck -->
+  <rect x="88" y="100" width="24" height="22" rx="6" fill="white"/>
+</svg>

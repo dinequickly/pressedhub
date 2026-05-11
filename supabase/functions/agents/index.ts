@@ -11,7 +11,7 @@ import { Router, readJson } from "../_shared/router.ts";
 import { requireUser } from "../_shared/auth.ts";
 import { BadRequest, NotFound, noContent, ok, Upstream } from "../_shared/errors.ts";
 import { AgentCreateSchema, AgentUpdateSchema } from "../_shared/schemas.ts";
-import { AnthropicAgents } from "../_shared/anthropic.ts";
+import { AnthropicAgents, DEFAULT_THINKING_CONFIG } from "../_shared/anthropic.ts";
 import { skillsForAnthropic, withBuiltinTools } from "../_shared/agent_config.ts";
 import { writeAudit } from "../_shared/audit.ts";
 
@@ -52,6 +52,7 @@ router.post("/", async (req) => {
       name: parsed.name,
       model: parsed.model,
       system: parsed.system_prompt,
+      thinking: DEFAULT_THINKING_CONFIG,
       tools: withBuiltinTools(
         parsed.tools.length
           ? (parsed.tools as Record<string, unknown>[])
@@ -119,6 +120,7 @@ router.patch("/:id", async (req, params) => {
       if (parsed.system_prompt !== undefined) updateInput.system = parsed.system_prompt;
       if (parsed.model !== undefined) updateInput.model = parsed.model;
       if (parsed.name !== undefined) updateInput.name = parsed.name;
+      updateInput.thinking = DEFAULT_THINKING_CONFIG;
       // Always re-sync the toolset so existing agents pick up new built-in
       // tools (kb_*). Caller-provided tools take precedence; otherwise we
       // round-trip whatever the local row already had.

@@ -5,7 +5,8 @@
 // e.g. after downloading the Pressed asset folder from Drive. For each file:
 //   1. Uploads to Supabase Storage bucket `media` at users/<owner-id>/<uuid>/<name>.
 //   2. Inserts a media_assets row pointing at that storage path.
-//   3. Tags the row so the Director's list_media tool can find it.
+//   3. Classifies the row as canonical library / board-local / generated.
+//   4. Tags the row so the Director's list_media tool can find it.
 //
 // Per-folder filtering + auto-tagging:
 //   - --exclude <pat> (repeatable) skips any path containing <pat>
@@ -60,6 +61,8 @@ if (!sourcePath) {
 }
 const sourceAbs = resolve(sourcePath);
 const tag = args.flags.tag ?? "pressed-assets";
+const sourceKind = args.flags["source-kind"] ?? "pressed_library";
+const collectionKey = args.flags["collection-key"] ?? (tag === "pressed-assets" ? "pressed-assets" : null);
 const recursive = !!args.bool.recursive;
 const dryRun = !!args.bool["dry-run"];
 const excludes = (args.repeat.exclude ?? []).map((s) => s.toLowerCase());
@@ -70,6 +73,8 @@ const includes = (args.repeat.include ?? []).map((s) => s.toLowerCase());
 const ownerId = await resolveOwner(args.flags.owner);
 log(`owner:    ${ownerId}`);
 log(`tag:      "${tag}"`);
+log(`source:   "${sourceKind}"`);
+if (collectionKey) log(`collection:"${collectionKey}"`);
 if (excludes.length) log(`excludes: ${excludes.map((e) => `"${e}"`).join(", ")}`);
 if (includes.length) log(`includes: ${includes.map((i) => `"${i}"`).join(", ")}`);
 if (dryRun) log("DRY RUN — no uploads will happen");
@@ -97,6 +102,10 @@ for (const file of files) {
       relName: basename(file),
       ownerId,
       tags: derivedTags(rel),
+      sourceKind,
+      collectionKey,
+      productKey: deriveProductKey(rel),
+      shotKey: deriveShotKey(rel),
     });
     if (result === "skipped") { skipped++; log(`  - ${rel} (already in media, skipped)`); }
     else { uploaded++; log(`  + ${rel}  tags=[${derivedTags(rel).join(", ")}]`); }
@@ -158,6 +167,35 @@ function slugify(s) {
     .replace(/^-|-$/g, "");
 }
 
+function deriveProductKey(rel) {
+  const tagsForFile = derivedTags(rel);
+  const generic = new Set([
+    tag,
+    "front",
+    "back",
+    "blue",
+    "lifestyle",
+    "hero",
+    "renders",
+    "render",
+    "cans",
+    "bottles",
+    "packaging",
+    "assets",
+    "pressed-assets",
+  ]);
+  return tagsForFile.find((value) => !generic.has(value)) ?? null;
+}
+
+function deriveShotKey(rel) {
+  const tagsForFile = new Set(derivedTags(rel));
+  if (tagsForFile.has("lifestyle")) return "lifestyle";
+  if (tagsForFile.has("front")) return "front";
+  if (tagsForFile.has("back")) return "back";
+  if (tagsForFile.has("blue")) return "blue-shot";
+  return null;
+}
+
 // -- impl ----------------------------------------------------------------
 
 async function resolveOwner(emailFlag) {
@@ -173,7 +211,7 @@ async function resolveOwner(emailFlag) {
   fail(`Multiple admin profiles. Pass --owner=<email>. Candidates: ${admins.map((a) => a.email).join(", ")}`);
 }
 
-async function uploadOne({ absPath, relName, ownerId, tags }) {
+async function uploadOne({ absPath, relName, ownerId, tags, sourceKind, collectionKey, productKey, shotKey }) {
   // Idempotency: skip if this owner already has a media asset with this name.
   const dupes = await rest(
     "GET",
@@ -207,6 +245,11 @@ async function uploadOne({ absPath, relName, ownerId, tags }) {
     mime,
     size_bytes: bytes.length,
     tags,
+    source_kind: sourceKind,
+    collection_key: collectionKey,
+    product_key: productKey,
+    shot_key: shotKey,
+    status: "ready",
   });
   return inserted[0];
 }

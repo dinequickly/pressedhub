@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <rect width="200" height="200" fill="#9fa8d0"/>
+  <!-- head -->
+  <ellipse cx="100" cy="68" rx="34" ry="38" fill="white"/>
+  <!-- bob hair left -->
+  <ellipse cx="68" cy="72" rx="10" ry="24" fill="white" transform="rotate(-8,68,72)"/>
+  <!-- bob hair right -->
+  <ellipse cx="132" cy="72" rx="10" ry="24" fill="white" transform="rotate(8,132,72)"/>
+  <!-- shoulders / body -->
+  <path d="M30 200 Q50 130 100 120 Q150 130 170 200 Z" fill="white"/>
+  <!-- neck -->
+  <rect x="88" y="102" width="24" height="22" rx="6" fill="white"/>
+</svg>

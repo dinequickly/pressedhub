@@ -27,6 +27,7 @@ import { Modal } from "../../../components/Page";
 import { useApi, refresh } from "../../../lib/swr";
 import {
   api,
+  type MediaAsset,
   type VibeBoard,
   type VibeBoardItem,
   type VibeBoardState,
@@ -36,7 +37,7 @@ import { Canvas } from "../components/Canvas";
 import { DirectorChat } from "../components/Chat";
 import { Timeline } from "../components/Timeline";
 import { uploadFileToMedia } from "../lib/uploadMedia";
-import { loadThumb } from "../lib/thumbCache";
+import { loadThumb, preloadThumbs } from "../lib/thumbCache";
 
 export function BoardPage() {
   const { boardId } = useParams<{ boardId: string }>();
@@ -121,9 +122,10 @@ export function BoardPage() {
     try {
       await api.patch(`/vibe-boards/${boardId}`, next);
       setSaveStatus("saved");
-      // Refresh the boards list so the thumbnail/updated_at on /apps/image-creator
-      // is fresh next time.
       refresh("/vibe-boards");
+      // Also update the per-board SWR cache so stale data can't resurrect
+      // deleted items before the next background poll.
+      refresh(`/vibe-boards/${boardId}`);
     } catch {
       setSaveStatus("dirty");
     }
@@ -170,7 +172,7 @@ export function BoardPage() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-zinc-950">
+    <div className="h-full flex flex-col bg-zinc-50">
       <BoardHeader
         name={name ?? board.name}
         saveStatus={saveStatus}
@@ -210,6 +212,7 @@ export function BoardPage() {
       <AddImageModal
         open={addingImage}
         onClose={() => setAddingImage(false)}
+        boardId={board.id}
         existingCount={state.items.length}
         onAdd={(items) => {
           addImageItems(items);
@@ -230,21 +233,28 @@ function BoardHeader({
   onMode: (m: "whiteboard" | "timeline") => void;
 }) {
   return (
-    <div className="px-6 py-3 border-b border-zinc-800 bg-zinc-950 flex items-center gap-3">
-      <Link to="/apps/image-creator" className="text-zinc-500 hover:text-zinc-200 transition-colors ml-12">
-        <LuArrowLeft className="size-4" />
+    <div className="px-4 py-2.5 border-b border-gray-200 bg-zinc-50 flex items-center gap-2">
+      <Link
+        to="/apps/image-creator"
+        className="shrink-0 flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 transition-colors"
+      >
+        <LuArrowLeft className="size-3.5" />
+        Back
       </Link>
+      <span className="text-gray-300 select-none">·</span>
       <button
         onClick={onRename}
-        className="text-base font-semibold tracking-tight text-zinc-100 hover:text-fuchsia-300 transition-colors"
+        className="text-sm font-medium text-gray-800 hover:text-gray-900 transition-colors truncate max-w-xs"
       >
         {name}
       </button>
-      <button onClick={onRename} className="text-zinc-500 hover:text-zinc-300 transition-colors">
-        <LuPenLine className="size-3.5" />
+      <button onClick={onRename} className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors">
+        <LuPenLine className="size-3" />
       </button>
-      <ModeSwitch mode={mode} onMode={onMode} />
-      <SaveIndicator status={saveStatus} />
+      <div className="ml-auto flex items-center gap-3">
+        <ModeSwitch mode={mode} onMode={onMode} />
+        <SaveIndicator status={saveStatus} />
+      </div>
     </div>
   );
 }
@@ -253,16 +263,16 @@ function ModeSwitch({
   mode, onMode,
 }: { mode: "whiteboard" | "timeline"; onMode: (m: "whiteboard" | "timeline") => void }) {
   return (
-    <div className="ml-4 flex">
+    <div className="flex rounded-md border border-gray-200 overflow-hidden">
       {(["whiteboard", "timeline"] as const).map((m) => (
         <button
           key={m}
           onClick={() => onMode(m)}
           className={[
-            "px-4 py-1.5 text-xs font-medium tracking-wide border border-zinc-800 first:rounded-l-md last:rounded-r-md -ml-px first:ml-0 transition-colors",
+            "px-3 py-1.5 text-xs font-medium transition-colors",
             m === mode
-              ? "bg-zinc-100 text-black border-zinc-100 z-10"
-              : "bg-transparent text-zinc-400 hover:text-zinc-100 hover:border-zinc-700",
+              ? "bg-gray-800 text-white"
+              : "bg-white text-gray-500 hover:text-gray-800 hover:bg-gray-50",
           ].join(" ")}
         >
           {m === "whiteboard" ? "Whiteboard" : "Timeline"}
@@ -276,19 +286,19 @@ function SaveIndicator({ status }: { status: "idle" | "dirty" | "saving" | "save
   if (status === "idle") return null;
   if (status === "saving") {
     return (
-      <span className="ml-auto text-[11px] text-zinc-400 font-mono flex items-center gap-1">
+      <span className="ml-auto text-[11px] text-gray-400 font-mono flex items-center gap-1">
         <LuLoader className="size-3 animate-spin" /> saving…
       </span>
     );
   }
   if (status === "saved") {
     return (
-      <span className="ml-auto text-[11px] text-emerald-400 font-mono flex items-center gap-1">
+      <span className="ml-auto text-[11px] text-emerald-500 font-mono flex items-center gap-1">
         <LuCheck className="size-3" /> saved
       </span>
     );
   }
-  return <span className="ml-auto text-[11px] text-amber-400 font-mono">unsaved</span>;
+  return <span className="ml-auto text-[11px] text-amber-500 font-mono">unsaved</span>;
 }
 
 function Toolbar({
@@ -331,22 +341,22 @@ function Toolbar({
     }
   }
   return (
-    <aside className="border-r border-zinc-800 bg-zinc-950 flex flex-col min-h-0">
-      <div className="p-3 space-y-1 border-b border-zinc-900">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 px-2 mb-2">
+    <aside className="border-r border-gray-200 bg-gray-50 flex flex-col min-h-0">
+      <div className="p-3 space-y-1 border-b border-gray-100">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 px-2 mb-2">
           Add
         </div>
         {adders.map((it) => (
           <button
             key={it.type}
             onClick={() => onAdd(it.type)}
-            className="w-full text-left px-2.5 py-2 rounded-lg flex items-center gap-2 hover:bg-zinc-900 transition-colors"
+            className="w-full text-left px-2.5 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-100 transition-colors"
           >
-            <div className={`size-7 rounded-lg bg-${it.tint}-500/15 text-${it.tint}-300 grid place-items-center`}>
+            <div className={`size-7 rounded-lg bg-${it.tint}-50 text-${it.tint}-600 grid place-items-center`}>
               <it.Icon className="size-3.5" />
             </div>
-            <div className="text-sm text-zinc-200">{it.label}</div>
-            <LuPlus className="size-3.5 ml-auto text-zinc-600" />
+            <div className="text-sm text-gray-700">{it.label}</div>
+            <LuPlus className="size-3.5 ml-auto text-gray-400" />
           </button>
         ))}
       </div>
@@ -367,14 +377,14 @@ type SidebarEntry = {
 function ImagesList({ entries }: { entries: SidebarEntry[] }) {
   if (entries.length === 0) {
     return (
-      <div className="p-3 text-[11px] text-zinc-600 italic">
+      <div className="p-3 text-[11px] text-gray-400 italic">
         Images you add or generate appear here.
       </div>
     );
   }
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-2">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 px-2 mb-1.5">
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 px-2 mb-1.5">
         Images
       </div>
       <div className="space-y-1">
@@ -391,7 +401,7 @@ function SidebarEntryRow({ entry }: { entry: SidebarEntry }) {
   return (
     <div
       className={[
-        "flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-zinc-900 transition-colors",
+        "flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-gray-100 transition-colors",
         draggable ? "cursor-grab active:cursor-grabbing" : "",
       ].join(" ")}
       draggable={draggable}
@@ -409,7 +419,7 @@ function SidebarEntryRow({ entry }: { entry: SidebarEntry }) {
       onDragEnd={() => clearSidebarDrag()}
     >
       <SidebarThumb mediaId={entry.media_asset_id} />
-      <div className="text-[11px] text-zinc-300 truncate flex-1">{entry.name}</div>
+      <div className="text-[11px] text-gray-600 truncate flex-1">{entry.name}</div>
     </div>
   );
 }
@@ -423,7 +433,7 @@ function SidebarThumb({ mediaId }: { mediaId?: string }) {
     return () => { cancelled = true; };
   }, [mediaId]);
   return (
-    <div className="size-8 shrink-0 rounded-md bg-zinc-900 border border-zinc-800 overflow-hidden">
+    <div className="size-8 shrink-0 rounded-md bg-white border border-gray-200 overflow-hidden">
       {url ? <img src={url} className="size-full object-cover" draggable={false} /> : <div className="size-full" />}
     </div>
   );
@@ -453,10 +463,11 @@ function clearSidebarDrag() {
 // library is currently a placeholder. The Modal shell is light-themed by
 // default; we wrap our content in a dark surface that visually replaces it.
 function AddImageModal({
-  open, onClose, existingCount, onAdd,
+  open, onClose, boardId, existingCount, onAdd,
 }: {
   open: boolean;
   onClose: () => void;
+  boardId: string;
   existingCount: number;
   onAdd: (items: VibeBoardItem[]) => void;
 }) {
@@ -481,7 +492,11 @@ function AddImageModal({
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        const asset = await uploadFileToMedia(file);
+        const asset = await uploadFileToMedia(file, {
+          source_kind: "board_upload",
+          collection_key: "board-uploads",
+          board_id: boardId,
+        });
         created.push({
           id: `it_${Math.random().toString(36).slice(2, 10)}`,
           type: "image",
@@ -505,23 +520,23 @@ function AddImageModal({
   return (
     <Modal open={open} onClose={onClose}>
       <div className="-m-5">
-        <div className="bg-zinc-950 rounded-2xl border border-zinc-800 overflow-hidden">
-          <div className="flex items-center px-5 py-4 border-b border-zinc-800">
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+          <div className="flex items-center px-5 py-4 border-b border-gray-200">
             {step === "library" && (
               <button
                 onClick={() => setStep("choose")}
-                className="mr-2 text-zinc-500 hover:text-zinc-200 transition-colors"
+                className="mr-2 text-gray-400 hover:text-gray-900 transition-colors"
                 title="Back"
               >
                 <LuArrowLeft className="size-4" />
               </button>
             )}
-            <h2 className="text-base font-semibold text-zinc-100 tracking-tight">
+            <h2 className="text-base font-semibold text-gray-900 tracking-tight">
               {step === "choose" ? "Add an image" : "From library"}
             </h2>
             <button
               onClick={onClose}
-              className="ml-auto text-zinc-500 hover:text-zinc-200 transition-colors"
+              className="ml-auto text-gray-400 hover:text-gray-900 transition-colors"
               title="Close"
             >
               <LuX className="size-4" />
@@ -534,14 +549,14 @@ function AddImageModal({
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={!!uploading}
-                  className="group flex flex-col items-start gap-3 rounded-xl border border-fuchsia-400/30 bg-gradient-to-br from-fuchsia-500/10 via-zinc-900 to-violet-500/10 p-5 text-left transition-all hover:border-fuchsia-400/60 hover:shadow-lg hover:shadow-fuchsia-500/10 disabled:opacity-60 disabled:cursor-wait"
+                  className="group flex flex-col items-start gap-3 rounded-xl border border-fuchsia-300/50 bg-gradient-to-br from-fuchsia-50 via-white to-violet-50 p-5 text-left transition-all hover:border-fuchsia-400/70 hover:shadow-lg hover:shadow-fuchsia-100 disabled:opacity-60 disabled:cursor-wait"
                 >
-                  <div className="size-10 rounded-lg bg-fuchsia-500/20 text-fuchsia-300 grid place-items-center group-hover:bg-fuchsia-500/30 transition-colors">
+                  <div className="size-10 rounded-lg bg-fuchsia-50 text-fuchsia-600 grid place-items-center group-hover:bg-fuchsia-100 transition-colors border border-fuchsia-200">
                     <LuUpload className="size-5" />
                   </div>
                   <div>
-                    <div className="text-sm font-semibold text-zinc-100">Upload from computer</div>
-                    <div className="text-[11px] text-zinc-400 mt-1 leading-snug">
+                    <div className="text-sm font-semibold text-gray-900">Upload from computer</div>
+                    <div className="text-[11px] text-gray-500 mt-1 leading-snug">
                       {uploading
                         ? `Uploading ${Math.min(uploading.done + 1, uploading.count)} of ${uploading.count}…`
                         : "Pick one or more images. They land on the board and your media library."}
@@ -551,14 +566,14 @@ function AddImageModal({
                 <button
                   type="button"
                   onClick={() => setStep("library")}
-                  className="group flex flex-col items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5 text-left transition-all hover:border-zinc-700 hover:bg-zinc-900/80"
+                  className="group flex flex-col items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-5 text-left transition-all hover:border-gray-300 hover:bg-white"
                 >
-                  <div className="size-10 rounded-lg bg-zinc-800 text-zinc-300 grid place-items-center group-hover:bg-zinc-700 transition-colors">
+                  <div className="size-10 rounded-lg bg-white border border-gray-200 text-gray-500 grid place-items-center group-hover:bg-gray-50 transition-colors">
                     <LuLibrary className="size-5" />
                   </div>
                   <div>
-                    <div className="text-sm font-semibold text-zinc-100">From library</div>
-                    <div className="text-[11px] text-zinc-400 mt-1 leading-snug">
+                    <div className="text-sm font-semibold text-gray-900">From library</div>
+                    <div className="text-[11px] text-gray-500 mt-1 leading-snug">
                       Pick from images you've previously uploaded or generated.
                     </div>
                   </div>
@@ -605,22 +620,27 @@ function LibraryPicker({
   const [allAssets, setAllAssets] = useState<MediaAsset[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [tag, setTag] = useState<string>("");
   const [query, setQuery] = useState<string>("");
+  const [tag, setTag] = useState<string>("");
 
   useEffect(() => {
     let cancelled = false;
     api.get<{ data: MediaAsset[] }>(`/media`)
-      .then((r) => { if (!cancelled) setAllAssets(r.data); })
+      .then(async (r) => {
+        if (cancelled) return;
+        await preloadThumbs(r.data);
+        if (!cancelled) setAllAssets(r.data);
+      })
       .catch((e) => { if (!cancelled) setError((e as Error).message); });
     return () => { cancelled = true; };
   }, []);
 
-  // Tags pulled from the FULL list — stays stable across filter changes.
   const allTags = useMemo(() => {
     const set = new Set<string>();
-    for (const a of allAssets ?? []) for (const t of a.tags ?? []) set.add(t);
-    return Array.from(set).sort();
+    for (const a of allAssets ?? [])
+      for (const t of a.tags ?? [])
+        if (/^\d+\.?\d*oz$/i.test(t)) set.add(t);
+    return Array.from(set).sort((a, b) => parseFloat(a) - parseFloat(b));
   }, [allAssets]);
 
   // Apply tag + search filters client-side. Search matches case-insensitively
@@ -634,7 +654,9 @@ function LibraryPicker({
       if (q) {
         const inName = a.name.toLowerCase().includes(q);
         const inTags = (a.tags ?? []).some((t) => t.toLowerCase().includes(q));
-        if (!inName && !inTags) return false;
+        const inProduct = (a.product_key ?? "").toLowerCase().includes(q);
+        const inShot = (a.shot_key ?? "").toLowerCase().includes(q);
+        if (!inName && !inTags && !inProduct && !inShot) return false;
       }
       return true;
     });
@@ -661,6 +683,9 @@ function LibraryPicker({
         y: baseY + Math.floor(i / 3) * 280,
         media_asset_id: a.id,
         name: a.name,
+        caption: a.source_kind === "pressed_library"
+          ? [a.product_key, a.shot_key].filter(Boolean).join(" · ") || a.name
+          : undefined,
       });
       i++;
     }
@@ -669,49 +694,50 @@ function LibraryPicker({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <input
-          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-700"
-          placeholder="Search by filename…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        {allTags.length > 0 && (
-          <div className="flex gap-1 overflow-x-auto max-w-[60%]">
+      <input
+        className="w-full bg-white border border-gray-200 rounded-md px-2.5 py-1.5 text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-gray-300"
+        placeholder="Search by filename, product, shot, or tag…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+
+      {allTags.length > 0 && (
+        <div className="flex gap-1 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setTag("")}
+            className={[
+              "shrink-0 px-2 py-1 text-[11px] rounded-md border transition-colors",
+              tag === "" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-500 hover:text-gray-900 hover:border-gray-300",
+            ].join(" ")}
+          >
+            all sizes
+          </button>
+          {allTags.map((t) => (
             <button
+              key={t}
               type="button"
-              onClick={() => setTag("")}
+              onClick={() => setTag(t)}
               className={[
                 "shrink-0 px-2 py-1 text-[11px] rounded-md border transition-colors",
-                tag === "" ? "border-zinc-300 text-zinc-100" : "border-zinc-800 text-zinc-500 hover:text-zinc-200",
+                tag === t ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-500 hover:text-gray-900 hover:border-gray-300",
               ].join(" ")}
             >
-              all
+              {t}
             </button>
-            {allTags.map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setTag(t)}
-                className={[
-                  "shrink-0 px-2 py-1 text-[11px] rounded-md border transition-colors",
-                  tag === t ? "border-zinc-300 text-zinc-100" : "border-zinc-800 text-zinc-500 hover:text-zinc-200",
-                ].join(" ")}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+          ))}
+        </div>
+      )}
 
       {error ? (
-        <div className="text-xs text-rose-400">Couldn't load library: {error}</div>
-      ) : !assets ? (
-        <div className="text-xs text-zinc-500">Loading…</div>
+        <div className="text-xs text-rose-500">Couldn't load library: {error}</div>
+      ) : !allAssets ? (
+        <div className="flex items-center justify-center py-10">
+          <LuLoader className="size-5 text-gray-300 animate-spin" />
+        </div>
       ) : assets.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-900/50 p-10 text-center text-xs text-zinc-500">
-          No assets {tag ? `tagged "${tag}"` : "yet"}. Run <code className="text-zinc-300">npm run upload-assets</code> to seed the library.
+        <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-xs text-gray-400">
+          No assets match your search.
         </div>
       ) : (
         <div className="grid grid-cols-4 gap-2 max-h-[55vh] overflow-y-auto pr-1">
@@ -726,9 +752,9 @@ function LibraryPicker({
         </div>
       )}
 
-      <div className="flex items-center justify-between pt-2 border-t border-zinc-800">
-        <div className="text-[11px] text-zinc-500">
-          {picked.size} selected{assets ? ` · ${assets.length} in library` : ""}
+      <div className="flex items-center justify-between pt-2 border-t border-gray-200">
+        <div className="text-[11px] text-gray-400">
+          {picked.size} selected{assets ? ` · ${assets.length} shown` : ""}
         </div>
         <button
           type="button"
@@ -743,40 +769,82 @@ function LibraryPicker({
   );
 }
 
-type MediaAsset = {
-  id: string;
-  name: string;
-  mime: string;
-  size_bytes: number;
-  tags: string[];
-};
-
 function LibraryTile({
   asset, picked, onToggle,
 }: { asset: MediaAsset; picked: boolean; onToggle: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const isPdf = asset.mime === "application/pdf";
+  const isAi = asset.mime === "application/postscript" || asset.name.toLowerCase().endsWith(".ai");
+
   useEffect(() => {
     let cancelled = false;
-    loadThumb(asset.id).then((u) => { if (!cancelled) setUrl(u); }).catch(() => {});
+    if (isAi) { setLoading(false); return; }
+
+    if (isPdf) {
+      // Render first page of PDF to a canvas via PDF.js, then convert to blob URL.
+      (async () => {
+        try {
+          const signedUrl = await loadThumb(asset.id, asset.storage_path);
+          const pdfjsLib = await import("pdfjs-dist");
+          pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+            "pdfjs-dist/build/pdf.worker.min.mjs",
+            import.meta.url,
+          ).toString();
+          const pdf = await pdfjsLib.getDocument(signedUrl).promise;
+          const page = await pdf.getPage(1);
+          const vp = page.getViewport({ scale: 1 });
+          const scale = Math.min(300 / vp.width, 300 / vp.height);
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext("2d")!;
+          await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+          if (!cancelled) {
+            setUrl(canvas.toDataURL("image/png"));
+            setLoading(false);
+          }
+        } catch {
+          if (!cancelled) setLoading(false);
+        }
+      })();
+      return () => { cancelled = true; };
+    }
+
+    loadThumb(asset.id, asset.storage_path)
+      .then((u) => { if (!cancelled) { setUrl(u); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [asset.id]);
+  }, [asset.id, asset.storage_path, isPdf, isAi]);
+
   return (
     <button
       type="button"
       onClick={onToggle}
       className={[
-        "relative aspect-square rounded-md overflow-hidden bg-zinc-900 border transition-colors text-left",
-        picked ? "border-fuchsia-400 ring-2 ring-fuchsia-400/40" : "border-zinc-800 hover:border-zinc-700",
+        "relative aspect-square rounded-md overflow-hidden border transition-colors text-left",
+        isAi ? "bg-orange-50" : "bg-gray-100",
+        picked ? "border-fuchsia-400 ring-2 ring-fuchsia-400/40" : "border-gray-200 hover:border-gray-300",
       ].join(" ")}
       title={asset.name}
     >
-      {url ? (
+      {isAi ? (
+        <div className="size-full flex flex-col items-center justify-center gap-1">
+          <span className="text-2xl font-bold text-orange-400">Ai</span>
+          <span className="text-[9px] text-orange-400/70 font-medium">Illustrator</span>
+        </div>
+      ) : loading ? (
+        <div className="size-full flex items-center justify-center">
+          <LuLoader className="size-4 text-gray-300 animate-spin" />
+        </div>
+      ) : url ? (
         <img src={url} className="size-full object-cover" />
       ) : (
-        <div className="size-full" />
+        <div className="size-full flex items-center justify-center text-gray-300 text-[9px]">failed</div>
       )}
       <div className="absolute bottom-0 inset-x-0 px-1.5 py-1 bg-gradient-to-t from-black/80 to-transparent">
-        <div className="text-[10px] text-zinc-200 truncate">{asset.name}</div>
+        <div className="text-[10px] text-white truncate">{asset.name}</div>
       </div>
       {picked && (
         <div className="absolute top-1 right-1 size-5 rounded-full bg-fuchsia-500 text-white text-[10px] grid place-items-center font-semibold">
@@ -786,6 +854,7 @@ function LibraryTile({
     </button>
   );
 }
+
 
 function RenameModal({
   open, initialName, onSave, onClose,
@@ -817,4 +886,3 @@ function RenameModal({
     </Modal>
   );
 }
-

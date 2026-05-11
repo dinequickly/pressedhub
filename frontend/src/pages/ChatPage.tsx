@@ -1,10 +1,9 @@
-// /chat — Conversation surface for talking to agents. List of recent chats
-// on the left, full event stream + composer on the right. The session list
-// hits the same /sessions endpoint as /runs; the difference is what we show
-// and how (chat-first vs engineering-first).
+// /chat — Conversation surface for talking to agents. The app shell owns the
+// recent-chat list when chat mode is active, so this page focuses on the
+// active transcript, composer, and file/output context.
 
 import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   LuPlus, LuBan, LuSend, LuPanelRight, LuFile, LuFileText,
   LuFileSpreadsheet, LuImage, LuFileCode, LuPresentation, LuPaperclip,
@@ -19,72 +18,50 @@ import { EmptyState, Modal, Page, StatusPill } from "../components/Page";
 import { OutputPreview } from "../components/OutputPreview";
 import { ChatStream, JuiceLoader, LiveActivity } from "../components/ChatEvents";
 import { FN_URL, supabase } from "../lib/supabase";
-import { humanizeBytes, relativeTime } from "../lib/format";
+import { humanizeBytes } from "../lib/format";
 import { uploadKbFile } from "../lib/kb";
 
 export function ChatPage() {
   const { sessionId } = useParams<{ sessionId?: string }>();
-  const nav = useNavigate();
+  const location = useLocation();
   const { data: sessions } = useApi<{ data: Session[] }>("/sessions", {
     refreshInterval: 5000,
   });
   const [creating, setCreating] = useState(false);
+  const [defaultAgentId, setDefaultAgentId] = useState<string | undefined>();
 
   const list = sessions?.data ?? [];
   const selectedId = sessionId ?? list[0]?.id ?? null;
+
+  // Roster "Chat" button passes agentId via nav state — auto-open modal pre-filled
+  useEffect(() => {
+    const id = (location.state as { newChatAgentId?: string } | null)?.newChatAgentId;
+    if (id) {
+      setDefaultAgentId(id);
+      setCreating(true);
+      window.history.replaceState({}, "");
+    }
+  }, [location.state]);
 
   return (
     <Page
       title="Chat"
       subtitle="Conversations with your agents, plus the files and outputs they work with along the way."
       actions={
-        <button className="btn-primary" onClick={() => setCreating(true)}>
+        <button className="btn-primary" onClick={() => { setDefaultAgentId(undefined); setCreating(true); }}>
           <LuPlus className="size-4" /> New chat
         </button>
       }
     >
-      <div className="h-full grid grid-cols-[280px_1fr]">
-        <div className="border-r border-neutral-200 overflow-y-auto p-2">
-          {!list.length ? (
-            <EmptyState title="No chats yet" />
-          ) : groupSessionsByDate(list).map((group) => (
-            <div key={group.label} className="mb-3">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-400 px-3 mb-1">
-                {group.label}
-              </div>
-              {group.sessions.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => nav(`/chat/${s.id}`)}
-                  className={[
-                    "w-full text-left px-3 py-2 rounded-lg flex items-start gap-2 transition-colors",
-                    selectedId === s.id ? "bg-violet-50" : "hover:bg-neutral-100",
-                  ].join(" ")}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <div className="text-sm font-medium truncate">{s.title ?? "Untitled"}</div>
-                      <StatusPill status={s.status} />
-                    </div>
-                    <div className="text-[11px] text-ink-500 truncate">
-                      {relativeTime(s.started_at)}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-        <div className="overflow-hidden">
-          {selectedId ? (
-            <ChatSurface sessionId={selectedId} />
-          ) : (
-            <EmptyState title="Start a chat" body="Pick a conversation or click New chat" />
-          )}
-        </div>
+      <div className="h-full overflow-hidden">
+        {selectedId ? (
+          <ChatSurface sessionId={selectedId} />
+        ) : (
+          <EmptyState title="Start a chat" body="Create a chat to get the conversation going." />
+        )}
       </div>
 
-      <NewChatModal open={creating} onClose={() => setCreating(false)} />
+      <NewChatModal open={creating} defaultAgentId={defaultAgentId} onClose={() => { setCreating(false); setDefaultAgentId(undefined); }} />
     </Page>
   );
 }
@@ -157,14 +134,13 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
     )));
   }, [realEvents, optimisticAttached.length]);
 
-  // Attach to the session SSE stream while the agent is running. The backend
-  // stream proxy persists events to session_events as they arrive from
-  // Anthropic, then we re-fetch (SWR dedupes). This collapses the
-  // user-sends-message → agent-replies latency from a poll cycle to ~real
-  // time — without it we'd wait up to refreshInterval + the background-fetch
-  // round-trip every turn.
+  // Attach to the session SSE stream as soon as the chat opens, not just once
+  // the local status flips to `running`. Thinking events can arrive before the
+  // next poll notices the session is active, and Anthropic may not replay that
+  // content from events.list later. The backend stream proxy persists events to
+  // session_events as they arrive, then we re-fetch (SWR dedupes).
   useEffect(() => {
-    if (status !== "running") return;
+    if (status === "terminated") return;
     let cancelled = false;
     let abort: AbortController | null = null;
     (async () => {
@@ -399,21 +375,7 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
           <h2 className="text-base font-semibold truncate">{session.title ?? "Untitled"}</h2>
           <StatusPill status={session.status} />
         </div>
-        <div className="flex items-center gap-2">
-          {!terminated && (
-            <button className="btn-ghost" onClick={interrupt}>
-              <LuBan className="size-3.5" /> Stop
-            </button>
-          )}
-          <button
-            className="btn-ghost"
-            onClick={() => setFilesOpen((v) => !v)}
-            title={filesOpen ? "Hide files" : "Show files"}
-          >
-            <LuPanelRight className="size-3.5" />
-            Files{totalFiles > 0 ? ` · ${totalFiles}` : ""}
-          </button>
-        </div>
+        <div className="flex items-center gap-2" />
       </div>
 
       <div ref={eventsRef} className="flex-1 overflow-y-auto px-6 py-5 space-y-3 bg-[linear-gradient(180deg,rgba(250,250,249,0.94),rgba(245,245,244,0.98))]">
@@ -541,28 +503,6 @@ class ChatErrorBoundary extends Component<{ children: ReactNode }, { error: Erro
     }
     return this.props.children;
   }
-}
-
-function groupSessionsByDate(sessions: Session[]): Array<{ label: string; sessions: Session[] }> {
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
-  const startOfWeek = startOfToday - 7 * 24 * 60 * 60 * 1000;
-  const startOfMonth = startOfToday - 30 * 24 * 60 * 60 * 1000;
-  const buckets: Record<string, Session[]> = {
-    Today: [], Yesterday: [], "This week": [], "This month": [], Older: [],
-  };
-  for (const s of sessions) {
-    const t = new Date(s.started_at).getTime();
-    if (t >= startOfToday) buckets["Today"].push(s);
-    else if (t >= startOfYesterday) buckets["Yesterday"].push(s);
-    else if (t >= startOfWeek) buckets["This week"].push(s);
-    else if (t >= startOfMonth) buckets["This month"].push(s);
-    else buckets["Older"].push(s);
-  }
-  return Object.entries(buckets)
-    .filter(([, ss]) => ss.length > 0)
-    .map(([label, ss]) => ({ label, sessions: ss }));
 }
 
 function collectAttachedFiles(events: SessionEvent[]): AttachedFile[] {
@@ -799,22 +739,29 @@ async function downloadOutput(sessionId: string, output: RunOutput): Promise<voi
   }
 }
 
-function NewChatModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function NewChatModal({ open, defaultAgentId, onClose }: { open: boolean; defaultAgentId?: string; onClose: () => void }) {
   const nav = useNavigate();
   const { data: agents } = useApi<{ data: Agent[] }>(open ? "/agents" : null);
   const { data: envs } = useApi<{ data: Environment[] }>(open ? "/environments" : null);
   const [agentId, setAgentId] = useState("");
-  const [envId, setEnvId] = useState("");
-  const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Default to the first env so the user doesn't have to think about it for
-  // the common case of a single shared environment.
+  // Auto-select first env (hidden from UI)
+  const envId = envs?.data?.[0]?.id ?? "";
+
+  // Pre-fill from roster nav state
   useEffect(() => {
-    if (!envId && envs?.data?.length) setEnvId(envs.data[0].id);
-  }, [envs?.data, envId]);
+    if (defaultAgentId) setAgentId(defaultAgentId);
+  }, [defaultAgentId]);
+
+  // Default to first agent when list loads and nothing pre-selected
+  useEffect(() => {
+    if (!agentId && agents?.data?.length) setAgentId(agents.data[0].id);
+  }, [agents?.data, agentId]);
+
+  const selectedAgent = agents?.data?.find(a => a.id === agentId);
 
   return (
     <Modal
@@ -828,12 +775,12 @@ function NewChatModal({ open, onClose }: { open: boolean; onClose: () => void })
               setBusy(true); setErr(null);
               try {
                 const created = await api.post<Session>("/sessions", {
-                  agent_id: agentId, environment_id: envId, title,
+                  agent_id: agentId, environment_id: envId,
                   initial_message: message || undefined,
                 });
                 refresh("/sessions");
                 onClose();
-                setTitle(""); setMessage(""); setAgentId("");
+                setMessage(""); setAgentId("");
                 nav(`/chat/${created.id}`);
               } catch (e) { setErr((e as Error).message); }
               finally { setBusy(false); }
@@ -848,24 +795,13 @@ function NewChatModal({ open, onClose }: { open: boolean; onClose: () => void })
         <div>
           <label className="label block mb-1">Agent</label>
           <select className="input" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
-            <option value="">Pick an agent…</option>
             {(agents?.data ?? []).map((a) => (
-              <option key={a.id} value={a.id}>{a.emoji} {a.name}</option>
+              <option key={a.id} value={a.id}>{a.name} · {a.model}</option>
             ))}
           </select>
-        </div>
-        <div>
-          <label className="label block mb-1">Environment</label>
-          <select className="input" value={envId} onChange={(e) => setEnvId(e.target.value)}>
-            <option value="">Pick an environment…</option>
-            {(envs?.data ?? []).map((e) => (
-              <option key={e.id} value={e.id}>{e.name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label block mb-1">Title (optional)</label>
-          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
+          {selectedAgent && (
+            <p className="text-xs text-ink-400 mt-1">{selectedAgent.system_prompt?.slice(0, 100)}{(selectedAgent.system_prompt?.length ?? 0) > 100 ? "…" : ""}</p>
+          )}
         </div>
         <div>
           <label className="label block mb-1">First message</label>

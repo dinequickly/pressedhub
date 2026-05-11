@@ -1,7 +1,9 @@
-// Custom drag-and-drop canvas for vibe boards. Stitch-inspired dark surface.
+// Custom drag-and-drop canvas for vibe boards. Clean light surface.
 //
 // Interactions:
 //   - Drag an item's header to move it.
+//   - Drag empty board space to pan around.
+//   - Scroll on the board to zoom in/out around the cursor.
 //   - Double-click empty canvas to drop a note at the click point.
 //   - Drag image files from your desktop onto the canvas to upload them
 //     into the media library and pin them to the board as image items.
@@ -19,6 +21,7 @@ import {
   type PromptModel,
   type Stroke,
   type VibeBoardItem,
+  type VibeBoardNoteItem,
   type VibeBoardPromptItem,
   type VibeBoardState,
 } from "../../../lib/api";
@@ -70,6 +73,13 @@ async function collectDroppedFiles(dt: DataTransfer): Promise<File[]> {
   }
   if (out.length > 0) return out;
 
+  for (const item of Array.from(dt.items ?? [])) {
+    if (item.kind !== "file") continue;
+    const file = item.getAsFile();
+    if (file && file.type.startsWith("image/")) out.push(file);
+  }
+  if (out.length > 0) return out;
+
   const uri = dt.getData("text/uri-list") || dt.getData("text/plain");
   let candidate: string | null = null;
   if (uri && /^https?:\/\//i.test(uri.trim())) candidate = uri.trim().split("\n")[0];
@@ -95,9 +105,9 @@ async function collectDroppedFiles(dt: DataTransfer): Promise<File[]> {
 }
 import { AnnotationOverlay, AnnotationsThumbnail } from "./AnnotationOverlay";
 
-export const CANVAS_W = 3200;
-export const CANVAS_H = 2000;
 const ITEM_W = 240;
+const MIN_ZOOM = 0.4;
+const MAX_ZOOM = 2.5;
 
 
 export function Canvas({
@@ -117,9 +127,82 @@ export function Canvas({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState<{ count: number; done: number } | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [panDrag, setPanDrag] = useState<{
+    clientX: number;
+    clientY: number;
+    startPanX: number;
+    startPanY: number;
+  } | null>(null);
   const dragCounter = useRef(0);
+  const uploadErrorTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
+
+  useEffect(() => () => {
+    if (uploadErrorTimer.current) window.clearTimeout(uploadErrorTimer.current);
+  }, []);
+
+  // Center the viewport on existing items the first time they show up, so a
+  // reopened board doesn't start staring into an empty patch of canvas.
+  const didInitialCenter = useRef(false);
+  useEffect(() => {
+    if (didInitialCenter.current) return;
+    if (state.items.length === 0) return;
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+    didInitialCenter.current = true;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const it of state.items) {
+      minX = Math.min(minX, it.x);
+      minY = Math.min(minY, it.y);
+      maxX = Math.max(maxX, it.x + ITEM_W);
+      maxY = Math.max(maxY, it.y + ITEM_W);
+    }
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    setPan({
+      x: viewport.clientWidth / 2 - cx,
+      y: viewport.clientHeight / 2 - cy,
+    });
+  }, [state.items]);
+
+  function flashUploadError(message: string) {
+    setUploadError(message);
+    if (uploadErrorTimer.current) window.clearTimeout(uploadErrorTimer.current);
+    uploadErrorTimer.current = window.setTimeout(() => setUploadError(null), 5000);
+  }
+
+  useEffect(() => {
+    if (!panDrag) return;
+    const drag = panDrag;
+    function onMouseMove(e: MouseEvent) {
+      const dx = e.clientX - drag.clientX;
+      const dy = e.clientY - drag.clientY;
+      setPan({ x: drag.startPanX + dx, y: drag.startPanY + dy });
+    }
+    function onMouseUp() {
+      setPanDrag(null);
+    }
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [panDrag]);
 
   // Cmd-V / Ctrl-V of a screenshot or image. The clipboard exposes image
   // bytes as files. We treat each as an upload + new image item near the
@@ -135,24 +218,33 @@ export function Canvas({
       );
       if (files.length === 0) return;
       e.preventDefault();
-      const scroller = scrollRef.current;
-      const cx = (scroller?.scrollLeft ?? 0) + (scroller?.clientWidth ?? 800) / 2;
-      const cy = (scroller?.scrollTop ?? 0) + (scroller?.clientHeight ?? 600) / 2;
+      const viewport = scrollRef.current;
+      const currentZoom = zoomRef.current;
+      const cur = panRef.current;
+      const w = viewport?.clientWidth ?? 800;
+      const h = viewport?.clientHeight ?? 600;
+      const cx = (w / 2 - cur.x) / currentZoom;
+      const cy = (h / 2 - cur.y) / currentZoom;
       setUploading({ count: files.length, done: 0 });
       const created: VibeBoardItem[] = [];
       for (let i = 0; i < files.length; i++) {
         try {
-          const asset = await uploadFileToMedia(files[i]);
+          const asset = await uploadFileToMedia(files[i], {
+            source_kind: "board_upload",
+            collection_key: "board-uploads",
+            board_id: boardId,
+          });
           created.push({
             id: `it_${Math.random().toString(36).slice(2, 10)}`,
             type: "image",
-            x: Math.max(0, cx - ITEM_W / 2 + (i % 3) * (ITEM_W + 16)),
-            y: Math.max(0, cy - 30 + Math.floor(i / 3) * 280),
+            x: cx - ITEM_W / 2 + (i % 3) * (ITEM_W + 16),
+            y: cy - 30 + Math.floor(i / 3) * 280,
             media_asset_id: asset.id,
             name: files[i].name || `pasted-${Date.now()}.png`,
           });
         } catch (err) {
           console.warn("[canvas] paste upload failed:", err);
+          flashUploadError(`Couldn't upload ${files[i].name || "pasted image"}. ${(err as Error).message}`);
         } finally {
           setUploading((s) => (s ? { ...s, done: s.done + 1 } : null));
         }
@@ -164,7 +256,6 @@ export function Canvas({
     return () => window.removeEventListener("paste", onPaste);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
-
 
   function patchItem(id: string, patch: Partial<VibeBoardItem>) {
     onChange((prev) => ({
@@ -187,24 +278,59 @@ export function Canvas({
   // Translate a screen-space mouse event into canvas-space coordinates.
   function pointToCanvas(clientX: number, clientY: number): { x: number; y: number } {
     const surface = surfaceRef.current;
-    const scroller = scrollRef.current;
-    if (!surface || !scroller) return { x: 0, y: 0 };
+    const currentZoom = zoomRef.current;
+    if (!surface) return { x: 0, y: 0 };
     const rect = surface.getBoundingClientRect();
     return {
-      x: clientX - rect.left,
-      y: clientY - rect.top,
+      x: (clientX - rect.left) / currentZoom,
+      y: (clientY - rect.top) / currentZoom,
     };
   }
 
+  function onViewportMouseDown(e: React.MouseEvent) {
+    if (e.button !== 0) return;
+    if (e.target !== scrollRef.current) return;
+    setPanDrag({
+      clientX: e.clientX,
+      clientY: e.clientY,
+      startPanX: panRef.current.x,
+      startPanY: panRef.current.y,
+    });
+  }
+
+  function onWheelZoom(e: React.WheelEvent) {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("textarea, input, button")) return;
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+    e.preventDefault();
+    const rect = viewport.getBoundingClientRect();
+    const pointerX = e.clientX - rect.left;
+    const pointerY = e.clientY - rect.top;
+    const oldZoom = zoomRef.current;
+    const nextZoom = Math.max(
+      MIN_ZOOM,
+      Math.min(MAX_ZOOM, oldZoom * Math.exp(-e.deltaY * 0.0015)),
+    );
+    if (Math.abs(nextZoom - oldZoom) < 0.001) return;
+    const cur = panRef.current;
+    const contentX = (pointerX - cur.x) / oldZoom;
+    const contentY = (pointerY - cur.y) / oldZoom;
+    setZoom(nextZoom);
+    setPan({
+      x: pointerX - contentX * nextZoom,
+      y: pointerY - contentY * nextZoom,
+    });
+  }
+
   function onDoubleClick(e: React.MouseEvent) {
-    // Only fire when the click lands on the empty surface, not on an item.
-    if (e.target !== surfaceRef.current) return;
+    if (e.target !== scrollRef.current) return;
     const { x, y } = pointToCanvas(e.clientX, e.clientY);
     addItem({
       id: `it_${Math.random().toString(36).slice(2, 10)}`,
       type: "note",
-      x: Math.max(0, x - ITEM_W / 2),
-      y: Math.max(0, y - 30),
+      x: x - ITEM_W / 2,
+      y: y - 30,
       text: "",
     });
   }
@@ -257,18 +383,23 @@ export function Canvas({
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        const asset = await uploadFileToMedia(file);
+        const asset = await uploadFileToMedia(file, {
+          source_kind: "board_upload",
+          collection_key: "board-uploads",
+          board_id: boardId,
+        });
         created.push({
           id: `it_${Math.random().toString(36).slice(2, 10)}`,
           type: "image",
-          x: Math.max(0, drop.x - ITEM_W / 2 + (i % 3) * (ITEM_W + 16)),
-          y: Math.max(0, drop.y - 30 + Math.floor(i / 3) * 280),
+          x: drop.x - ITEM_W / 2 + (i % 3) * (ITEM_W + 16),
+          y: drop.y - 30 + Math.floor(i / 3) * 280,
           // Reload-safe: store the asset id, resolve to bytes at render time.
           media_asset_id: asset.id,
           name: file.name,
         });
       } catch (err) {
         console.warn(`[canvas] upload of ${file.name} failed:`, err);
+        flashUploadError(`Couldn't upload ${file.name || "dropped image"}. ${(err as Error).message}`);
       } finally {
         setUploading((s) => (s ? { ...s, done: s.done + 1 } : null));
       }
@@ -280,39 +411,38 @@ export function Canvas({
   return (
     <div
       ref={scrollRef}
-      className="relative bg-zinc-950 overflow-auto h-full"
+      className={[
+        "relative bg-zinc-100 overflow-hidden h-full",
+        panDrag ? "cursor-grabbing select-none" : "cursor-grab",
+      ].join(" ")}
+      style={{
+        backgroundImage: lightDotGrid,
+        backgroundSize: `${32 * zoom}px ${32 * zoom}px`,
+        backgroundPosition: `${pan.x}px ${pan.y}px`,
+      }}
+      onMouseDown={onViewportMouseDown}
+      onDoubleClick={onDoubleClick}
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
+      onWheel={onWheelZoom}
     >
       <div
         ref={surfaceRef}
-        className="relative cursor-default"
-        onDoubleClick={onDoubleClick}
+        className="absolute top-0 left-0 origin-top-left"
         style={{
-          width: CANVAS_W,
-          height: CANVAS_H,
-          backgroundImage: darkDotGrid,
-          backgroundSize: "32px 32px",
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
         }}
       >
-        {state.items.length === 0 && (
-          <div className="absolute inset-0 grid place-items-center pointer-events-none">
-            <div className="text-center text-zinc-500 select-none">
-              <div className="text-sm font-medium tracking-wide">Empty canvas</div>
-              <div className="text-xs mt-1.5 text-zinc-600">
-                Double-click to drop a note · drag images here · or use the toolbar
-              </div>
-            </div>
-          </div>
-        )}
         {state.items.map((item) => (
           <CanvasItem
             key={item.id}
             boardId={boardId}
             item={item}
             sessionId={sessionId}
+            zoom={zoom}
+            surfaceRef={surfaceRef}
             onMove={(x, y) => patchItem(item.id, { x, y })}
             onUpdate={(patch) => patchItem(item.id, patch)}
             onDelete={() => removeItem(item.id)}
@@ -320,8 +450,27 @@ export function Canvas({
         ))}
       </div>
 
+      {state.items.length === 0 && (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center">
+          <div className="text-center text-gray-400 select-none">
+            <div className="text-sm font-medium tracking-wide">Empty canvas</div>
+            <div className="text-xs mt-1.5 text-gray-400">
+              Drag to pan · scroll to zoom · double-click to drop a note
+            </div>
+          </div>
+        </div>
+      )}
+
       <DropOverlay visible={dragging} />
       <UploadProgress upload={uploading} />
+      <UploadErrorBanner error={uploadError} />
+      <Minimap
+        items={state.items}
+        pan={pan}
+        zoom={zoom}
+        viewportRef={scrollRef}
+        onNavigate={setPan}
+      />
     </div>
   );
 }
@@ -335,16 +484,16 @@ function DropOverlay({ visible }: { visible: boolean }) {
       ].join(" ")}
     >
       {/* Soft fuchsia glow at the edges */}
-      <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-500/10 via-transparent to-violet-500/10" />
+      <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-100/60 via-transparent to-violet-100/60" />
       {/* Animated dotted border */}
       <div className="absolute inset-4 rounded-2xl border-2 border-dashed border-fuchsia-400/60 animate-pulse" />
       {/* Centered prompt */}
       <div className="absolute inset-0 grid place-items-center">
-        <div className="rounded-2xl bg-zinc-900/95 border border-fuchsia-400/40 px-6 py-4 shadow-2xl flex items-center gap-3">
-          <LuUpload className="size-5 text-fuchsia-400" />
+        <div className="rounded-2xl bg-white/90 border border-fuchsia-300/60 px-6 py-4 shadow-2xl shadow-gray-200 flex items-center gap-3">
+          <LuUpload className="size-5 text-fuchsia-500" />
           <div>
-            <div className="text-sm font-medium text-zinc-100">Drop to add to board</div>
-            <div className="text-[11px] text-zinc-400">Images upload to your media library</div>
+            <div className="text-sm font-medium text-gray-900">Drop to add to board</div>
+            <div className="text-[11px] text-gray-500">Images upload to your media library</div>
           </div>
         </div>
       </div>
@@ -357,9 +506,9 @@ function UploadProgress({ upload }: { upload: { count: number; done: number } | 
   const isDone = upload.done >= upload.count;
   return (
     <div className="pointer-events-none absolute bottom-4 right-4 z-30">
-      <div className="rounded-xl bg-zinc-900/95 border border-zinc-800 px-3 py-2 shadow-lg flex items-center gap-2">
-        <LuUpload className={["size-3.5 text-fuchsia-400", isDone ? "" : "animate-bounce"].join(" ")} />
-        <div className="text-xs text-zinc-300 font-medium">
+      <div className="rounded-xl bg-white/95 border border-gray-200 px-3 py-2 shadow-lg shadow-gray-200 flex items-center gap-2">
+        <LuUpload className={["size-3.5 text-fuchsia-500", isDone ? "" : "animate-bounce"].join(" ")} />
+        <div className="text-xs text-gray-700 font-medium">
           {isDone ? "Done" : `Uploading ${upload.done + 1}/${upload.count}…`}
         </div>
       </div>
@@ -367,12 +516,26 @@ function UploadProgress({ upload }: { upload: { count: number; done: number } | 
   );
 }
 
+function UploadErrorBanner({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <div className="pointer-events-none absolute top-4 right-4 z-30 max-w-sm">
+      <div className="rounded-xl border border-rose-300/50 bg-white/95 px-3 py-2 shadow-lg shadow-gray-200">
+        <div className="text-xs font-medium text-rose-600">Upload failed</div>
+        <div className="mt-0.5 text-[11px] leading-relaxed text-rose-500/90">{error}</div>
+      </div>
+    </div>
+  );
+}
+
 function CanvasItem({
-  boardId, item, sessionId, onMove, onUpdate, onDelete,
+  boardId, item, sessionId, zoom, surfaceRef, onMove, onUpdate, onDelete,
 }: {
   boardId: string;
   item: VibeBoardItem;
   sessionId: string | null;
+  zoom: number;
+  surfaceRef: React.RefObject<HTMLDivElement | null>;
   onMove: (x: number, y: number) => void;
   onUpdate: (patch: Partial<VibeBoardItem>) => void;
   onDelete: () => void;
@@ -383,16 +546,11 @@ function CanvasItem({
     if (!dragOffset) return;
     const offset = dragOffset;
     function onMouseMove(e: MouseEvent) {
-      // Find the surface scroll container so positions account for scroll.
-      const surface = (e.target as HTMLElement)?.closest(".relative") as HTMLElement | null;
-      const scrollEl = surface?.parentElement;
-      const rect = surface?.getBoundingClientRect();
+      const rect = surfaceRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const scrollLeft = scrollEl?.scrollLeft ?? 0;
-      const scrollTop = scrollEl?.scrollTop ?? 0;
-      const x = e.clientX - rect.left + scrollLeft - offset.dx;
-      const y = e.clientY - rect.top + scrollTop - offset.dy;
-      onMove(Math.max(0, Math.min(CANVAS_W - ITEM_W, x)), Math.max(0, y));
+      const x = (e.clientX - rect.left) / zoom - offset.dx;
+      const y = (e.clientY - rect.top) / zoom - offset.dy;
+      onMove(x, y);
     }
     function onMouseUp() { setDragOffset(null); }
     window.addEventListener("mousemove", onMouseMove);
@@ -401,33 +559,67 @@ function CanvasItem({
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, [dragOffset, onMove]);
+  }, [dragOffset, onMove, surfaceRef, zoom]);
 
   const Icon = iconFor(item.type);
   const tint = tintFor(item.type);
+  const hoverChrome = usesHoverChrome(item.type);
+  const cardClassName = hoverChrome
+    ? [
+      "absolute group rounded-xl overflow-hidden border transition-[background-color,border-color,box-shadow]",
+      dragOffset
+        ? "bg-white border-gray-300 shadow-xl shadow-gray-200/60"
+        : "bg-transparent border-transparent shadow-none hover:border-gray-300 hover:shadow-xl hover:shadow-gray-200/60 focus-within:border-gray-300 focus-within:shadow-xl focus-within:shadow-gray-200/60",
+    ].join(" ")
+    : "absolute group bg-white rounded-xl border border-gray-200 shadow-xl shadow-gray-200/60 hover:border-gray-300 transition-colors";
+  const headerClassName = [
+    hoverChrome
+      ? "absolute inset-x-0 top-0 z-10 flex items-center gap-2 px-3 py-2 cursor-move select-none transition-all"
+      : "flex items-center gap-2 px-3 py-2 cursor-move select-none transition-colors",
+    hoverChrome
+      ? dragOffset
+        ? "border-b border-gray-200 bg-white/92 backdrop-blur-sm opacity-100"
+        : "border-b border-transparent bg-white/88 backdrop-blur-sm opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-hover:border-gray-200 group-focus-within:opacity-100 group-focus-within:pointer-events-auto group-focus-within:border-gray-200"
+      : dragOffset
+        ? "border-b border-gray-200 bg-gray-100"
+        : "border-b border-gray-200",
+  ].join(" ");
 
   return (
     <div
-      className="absolute bg-zinc-900 rounded-xl border border-zinc-800 shadow-xl shadow-black/40 hover:border-zinc-700 transition-colors"
+      className={cardClassName}
       style={{ left: item.x, top: item.y, width: ITEM_W }}
     >
       <div
-        className={`flex items-center gap-2 px-3 py-2 border-b border-zinc-800 cursor-move select-none ${dragOffset ? "bg-zinc-800" : ""}`}
+        className={headerClassName}
         onMouseDown={(e) => {
+          const target = e.target as HTMLElement | null;
+          if (target?.closest("button, input, textarea")) return;
           const card = (e.currentTarget.parentElement as HTMLElement);
           const rect = card.getBoundingClientRect();
-          setDragOffset({ dx: e.clientX - rect.left, dy: e.clientY - rect.top });
+          setDragOffset({
+            dx: (e.clientX - rect.left) / zoom,
+            dy: (e.clientY - rect.top) / zoom,
+          });
         }}
       >
-        <div className={`size-5 rounded-md bg-${tint}-500/15 text-${tint}-300 grid place-items-center`}>
+        <div className={`size-5 rounded-md bg-${tint}-50 text-${tint}-600 grid place-items-center`}>
           <Icon className="size-3" />
         </div>
-        <div className="text-[11px] font-medium tracking-wide text-zinc-300 flex-1 truncate">
+        <div className="text-[11px] font-medium tracking-wide text-gray-500 flex-1 truncate">
           {headerLabel(item)}
         </div>
         <button
-          onClick={onDelete}
-          className="text-zinc-500 hover:text-rose-400 transition-colors"
+          type="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="text-gray-400 hover:text-rose-500 transition-colors"
           title="Delete"
         >
           <LuTrash2 className="size-3.5" />
@@ -448,31 +640,51 @@ function ItemBody({
 }) {
   if (item.type === "image" || item.type === "reference") {
     return (
-      <div className="p-2 space-y-2">
+      <div className="relative">
         <ImageBody
           item={item}
           sessionId={sessionId}
           annotations={item.annotations ?? []}
           onSaveAnnotations={(strokes) => onUpdate({ annotations: strokes })}
         />
-        <input
-          className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-fuchsia-400/50"
-          placeholder="Describe this image"
-          value={item.caption ?? ""}
-          onChange={(e) => onUpdate({ caption: e.target.value })}
-          onMouseDown={(e) => e.stopPropagation()}
-        />
+        <div className="pointer-events-none absolute inset-x-2 bottom-2 opacity-0 transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
+          <input
+            className="w-full rounded-md border border-black/10 bg-white/80 px-2 py-1 text-[11px] text-gray-900 placeholder:text-gray-400 backdrop-blur-sm focus:outline-none focus:border-fuchsia-400/50"
+            placeholder="Describe this image"
+            value={item.caption ?? ""}
+            onChange={(e) => onUpdate({ caption: e.target.value })}
+            onMouseDown={(e) => e.stopPropagation()}
+          />
+        </div>
       </div>
     );
   }
   if (item.type === "prompt") {
     return <PromptBody boardId={boardId} item={item} onUpdate={onUpdate} />;
   }
-  // note — sticky-note vibe, warm fill
+  // note — sticky-note vibe, warm fill. Height auto-fits the text length.
+  return <NoteBody item={item} onUpdate={onUpdate} />;
+}
+
+function NoteBody({
+  item, onUpdate,
+}: {
+  item: VibeBoardNoteItem;
+  onUpdate: (patch: Partial<VibeBoardItem>) => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [item.text]);
   return (
     <div className="p-2">
       <textarea
-        className="w-full rounded-md px-2 py-1.5 text-xs min-h-[60px] resize-none bg-amber-200/10 border border-amber-300/20 text-amber-100 placeholder:text-amber-200/30 focus:outline-none focus:border-amber-300/50"
+        ref={ref}
+        rows={1}
+        className="w-full rounded-md px-2 py-1.5 text-xs resize-none overflow-hidden bg-amber-50 border border-amber-200 text-amber-900 placeholder:text-amber-400 focus:outline-none focus:border-amber-300"
         placeholder="Note to self / agent…"
         value={item.text}
         onChange={(e) => onUpdate({ text: e.target.value })}
@@ -615,7 +827,11 @@ function PromptBody({
     const fresh: PromptAttachment[] = [];
     for (const file of files) {
       try {
-        const asset = await uploadFileToMedia(file);
+        const asset = await uploadFileToMedia(file, {
+          source_kind: "board_upload",
+          collection_key: "board-uploads",
+          board_id: boardId,
+        });
         fresh.push({
           id: `att_${Math.random().toString(36).slice(2, 10)}`,
           media_asset_id: asset.id,
@@ -661,10 +877,7 @@ function PromptBody({
 
   return (
     <div
-      className={[
-        "p-2 flex flex-col gap-1.5 relative rounded-md transition-colors",
-        attachDragging ? "ring-1 ring-sky-400/60 bg-sky-500/5" : "",
-      ].join(" ")}
+      className={["relative rounded-md transition-colors", attachDragging ? "ring-1 ring-sky-500/60 bg-sky-50/50" : ""].join(" ")}
       onKeyDown={onCardKeyDown}
       onDragEnter={onAttachDragEnter}
       onDragOver={onAttachDragOver}
@@ -680,73 +893,60 @@ function PromptBody({
           onPrev={navPrev}
           onNext={navNext}
           onSaveAnnotations={(strokes) => {
-            // Replace strokes on the active generation only.
             const next = generations.map((g, i) =>
               i === idx ? { ...g, annotations: strokes } : g);
             onUpdate({ generations: next });
           }}
         />
       )}
-      {attachments.length > 0 && (
-        <AttachmentsStrip
-          attachments={attachments}
-          onRemove={removeAttachment}
-        />
-      )}
-      <div className="flex items-center gap-1.5">
-        <ModelSelector active={activeModel} onChange={(m) => onUpdate({ model: m })} />
-        <button
-          type="button"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={onSend}
-          disabled={loading || !item.text.trim()}
-          className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-sky-500/15 text-sky-200 hover:bg-sky-500/25 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          {loading ? (
-            <>
-              <span className="size-3 rounded-full border border-sky-200/40 border-t-sky-200 animate-spin" />
-              Sending…
-            </>
-          ) : (
-            <>
-              <LuSend className="size-3" />
-              Send
-            </>
-          )}
-        </button>
-      </div>
-      {error && (
-        <div className="text-[11px] text-rose-400 leading-tight">{error}</div>
-      )}
-      <textarea
-        className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-2 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-sky-400/50 min-h-[80px] resize-none"
-        placeholder={attachments.length > 0
-          ? "Describe what to do with these images…"
-          : "Prompt text · drop images to attach"}
-        value={item.text}
-        onChange={(e) => onUpdate({ text: e.target.value })}
-        // Stop the textarea from absorbing internal asset/file drops as
-        // text input. Browsers default-accept drops on textareas, which
-        // would mean the prompt-card-level drop handler never fires.
-        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onAttachDrop(e);
-        }}
-      />
-      {attachDragging && (
-        // pointer-events-auto so the overlay swallows drops directly,
-        // bypassing the textarea's native text-drop handling entirely.
-        <div
-          className="absolute inset-0 rounded-md border-2 border-dashed border-sky-300/70 bg-sky-500/10 grid place-items-center"
+
+      {/* Controls: always below image (or standalone when no image) */}
+      <div className="p-2 flex flex-col gap-2">
+        {attachments.length > 0 && (
+          <AttachmentsStrip attachments={attachments} onRemove={removeAttachment} />
+        )}
+        <textarea
+          className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-sky-400/50 min-h-[56px] resize-none"
+          placeholder={attachments.length > 0
+            ? "Describe what to do with these images…"
+            : "Prompt · drop images to attach"}
+          value={item.text}
+          onChange={(e) => onUpdate({ text: e.target.value })}
           onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          onDrop={(e) => {
-            e.preventDefault();
-            onAttachDrop(e);
-          }}
+          onDrop={(e) => { e.preventDefault(); e.stopPropagation(); onAttachDrop(e); }}
+        />
+        <div className="flex items-center gap-1.5">
+          <ModelSelector active={activeModel} onChange={(m) => onUpdate({ model: m })} />
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={onSend}
+            disabled={loading || !item.text.trim()}
+            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-sky-500/10 text-sky-600 hover:bg-sky-500/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {loading ? (
+              <>
+                <span className="size-3 rounded-full border border-sky-400/40 border-t-sky-500 animate-spin" />
+                Sending…
+              </>
+            ) : (
+              <>
+                <LuSend className="size-3" />
+                Send
+              </>
+            )}
+          </button>
+        </div>
+        {error && <div className="text-[11px] text-rose-500 leading-tight">{error}</div>}
+      </div>
+
+      {attachDragging && (
+        <div
+          className="absolute inset-0 rounded-md border-2 border-dashed border-sky-400/70 bg-sky-50/80 grid place-items-center"
+          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onDrop={(e) => { e.preventDefault(); onAttachDrop(e); }}
         >
-          <div className="text-[11px] font-medium text-sky-100 pointer-events-none">Drop to attach</div>
+          <div className="text-[11px] font-medium text-sky-600 pointer-events-none">Drop to attach</div>
         </div>
       )}
     </div>
@@ -777,10 +977,10 @@ function ModelSelector({
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => onChange(opt.key)}
             className={[
-              "inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium tracking-wide border border-zinc-800 first:rounded-l-md last:rounded-r-md -ml-px first:ml-0 transition-colors",
+              "inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium tracking-wide border border-gray-200 first:rounded-l-md last:rounded-r-md -ml-px first:ml-0 transition-colors",
               active === opt.key
-                ? "bg-zinc-100 text-black border-zinc-100 z-10"
-                : "bg-transparent text-zinc-400 hover:text-zinc-100 hover:border-zinc-700",
+                ? "bg-gray-900 text-white border-gray-900 z-10"
+                : "bg-white text-gray-500 hover:text-gray-900 hover:border-gray-300",
             ].join(" ")}
           >
             <FaGoogle className="size-2.5" />
@@ -819,17 +1019,17 @@ function AttachmentChip({
     return () => { cancelled = true; };
   }, [attachment.media_asset_id]);
   return (
-    <div className="relative shrink-0 size-12 rounded-md overflow-hidden border border-zinc-800 bg-zinc-950 group">
+    <div className="relative shrink-0 size-12 rounded-md overflow-hidden border border-gray-200 bg-gray-50 group">
       {blobUrl ? (
         <img src={blobUrl} className="size-full object-cover" />
       ) : (
-        <div className="size-full grid place-items-center text-[9px] text-zinc-600">…</div>
+        <div className="size-full grid place-items-center text-[9px] text-gray-400">…</div>
       )}
       <button
         type="button"
         onMouseDown={(e) => e.stopPropagation()}
         onClick={onRemove}
-        className="absolute top-0 right-0 size-4 grid place-items-center bg-black/70 text-zinc-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity rounded-bl-md"
+        className="absolute top-0 right-0 size-4 grid place-items-center bg-white/80 text-gray-500 hover:text-gray-900 opacity-0 group-hover:opacity-100 transition-opacity rounded-bl-md"
         title={`Remove ${attachment.name}`}
       >
         ×
@@ -879,7 +1079,7 @@ function GenerationViewer({
     <div className="relative">
       {blobUrl ? (
         <div
-          className="relative w-full rounded-md overflow-hidden bg-zinc-950 group"
+          className="relative w-full rounded-md overflow-hidden bg-gray-50 group"
           onMouseDown={(e) => e.stopPropagation()}
         >
           <img
@@ -910,7 +1110,7 @@ function GenerationViewer({
           <EditPenButton onClick={() => setOverlayOpen(true)} />
         </div>
       ) : (
-        <div className="aspect-square bg-zinc-950 rounded-md grid place-items-center text-[11px] text-zinc-500">
+        <div className="aspect-square bg-gray-50 rounded-md grid place-items-center text-[11px] text-gray-400">
           {loading ? "loading…" : "(image unavailable)"}
         </div>
       )}
@@ -924,14 +1124,14 @@ function GenerationViewer({
         />
       )}
       <div
-        className="absolute bottom-1.5 right-1.5 flex items-center gap-0.5 rounded-md bg-black/70 backdrop-blur-sm border border-white/10 px-1 py-0.5 text-[10px] text-zinc-200"
+        className="absolute bottom-1.5 right-1.5 flex items-center gap-0.5 rounded-md bg-white/80 backdrop-blur-sm border border-gray-200 px-1 py-0.5 text-[10px] text-gray-700"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onPrev}
           disabled={idx <= 0}
-          className="px-1 py-0.5 rounded hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="px-1 py-0.5 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
           title="Previous (⌘Z)"
         >
           <LuChevronLeft className="size-3" />
@@ -941,7 +1141,7 @@ function GenerationViewer({
           type="button"
           onClick={onNext}
           disabled={idx >= total - 1}
-          className="px-1 py-0.5 rounded hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="px-1 py-0.5 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
           title="Next (⌘⇧Z)"
         >
           <LuChevronRight className="size-3" />
@@ -1035,7 +1235,7 @@ function ImageBody({
     return (
       <>
         <div
-          className="relative w-full rounded-md overflow-hidden bg-zinc-950 group"
+          className="relative w-full rounded-md overflow-hidden bg-gray-50 group"
           onMouseDown={(e) => e.stopPropagation()}
         >
           <img
@@ -1083,20 +1283,20 @@ function ImageBody({
   }
   if (loading) {
     return (
-      <div className="aspect-square bg-zinc-950 rounded-md grid place-items-center text-[11px] text-zinc-500">
+      <div className="aspect-square bg-gray-50 rounded-md grid place-items-center text-[11px] text-gray-400">
         loading…
       </div>
     );
   }
   if (fileId && !sessionId) {
     return (
-      <div className="aspect-square bg-zinc-950 rounded-md grid place-items-center text-[11px] text-zinc-500 px-2 text-center">
+      <div className="aspect-square bg-gray-50 rounded-md grid place-items-center text-[11px] text-gray-400 px-2 text-center">
         Start a Director chat to view generated images.
       </div>
     );
   }
   return (
-    <div className="aspect-square bg-zinc-950 rounded-md grid place-items-center text-[11px] text-zinc-500">
+    <div className="aspect-square bg-gray-50 rounded-md grid place-items-center text-[11px] text-gray-400">
       (no image yet)
     </div>
   );
@@ -1113,7 +1313,7 @@ function EditPenButton({ onClick }: { onClick: () => void }) {
       type="button"
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="absolute top-1.5 right-1.5 size-6 grid place-items-center rounded-md bg-black/70 backdrop-blur-sm border border-white/10 text-zinc-200 opacity-0 group-hover:opacity-100 hover:bg-black/85 hover:text-white transition-opacity"
+      className="absolute top-1.5 right-1.5 size-6 grid place-items-center rounded-md bg-white/80 backdrop-blur-sm border border-gray-200 text-gray-600 opacity-0 group-hover:opacity-100 hover:bg-white hover:text-gray-900 transition-opacity"
       title="Annotate"
     >
       <LuPencil className="size-3" />
@@ -1144,5 +1344,112 @@ function tintFor(type: VibeBoardItem["type"]) {
   return "amber";
 }
 
-const darkDotGrid =
-  "radial-gradient(circle, rgba(244,114,182,0.05) 1px, transparent 1px), radial-gradient(circle, rgba(255,255,255,0.04) 1px, transparent 1px)";
+function usesHoverChrome(type: VibeBoardItem["type"]) {
+  return type === "image" || type === "reference";
+}
+
+const lightDotGrid =
+  "radial-gradient(circle, rgba(0,0,0,0.18) 1px, transparent 1px)";
+
+const MINI_W = 180;
+const MINI_H = 110;
+
+function Minimap({
+  items, pan, zoom, viewportRef, onNavigate,
+}: {
+  items: VibeBoardItem[];
+  pan: { x: number; y: number };
+  zoom: number;
+  viewportRef: React.RefObject<HTMLDivElement | null>;
+  onNavigate: (pan: { x: number; y: number }) => void;
+}) {
+  const [vpSize, setVpSize] = useState({ w: 800, h: 600 });
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    setVpSize({ w: el.clientWidth, h: el.clientHeight });
+    const ro = new ResizeObserver(() => setVpSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [viewportRef]);
+
+  if (items.length === 0) return null;
+
+  // Bounding box of items in canvas coords
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const it of items) {
+    minX = Math.min(minX, it.x);
+    minY = Math.min(minY, it.y);
+    maxX = Math.max(maxX, it.x + ITEM_W);
+    maxY = Math.max(maxY, it.y + ITEM_W);
+  }
+
+  const pad = 60;
+  const extMinX = minX - pad;
+  const extMinY = minY - pad;
+  const extMaxX = maxX + pad;
+  const extMaxY = maxY + pad;
+  const contentW = Math.max(1, extMaxX - extMinX);
+  const contentH = Math.max(1, extMaxY - extMinY);
+
+  const scale = Math.min(MINI_W / contentW, MINI_H / contentH);
+  const offsetX = (MINI_W - contentW * scale) / 2;
+  const offsetY = (MINI_H - contentH * scale) / 2;
+
+  function toMini(cx: number, cy: number) {
+    return { mx: (cx - extMinX) * scale + offsetX, my: (cy - extMinY) * scale + offsetY };
+  }
+
+  // Viewport rect in canvas coords
+  const vpLeft = -pan.x / zoom;
+  const vpTop = -pan.y / zoom;
+  const vMW = Math.max(6, (vpSize.w / zoom) * scale);
+  const vMH = Math.max(6, (vpSize.h / zoom) * scale);
+  const { mx: vMx, my: vMy } = toMini(vpLeft, vpTop);
+
+  const colorFor = (type: VibeBoardItem["type"]) => {
+    if (type === "image" || type === "reference") return "#e879f9";
+    if (type === "prompt") return "#38bdf8";
+    return "#fbbf24";
+  };
+
+  function onMinimapClick(e: React.MouseEvent) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const canvasX = (mx - offsetX) / scale + extMinX;
+    const canvasY = (my - offsetY) / scale + extMinY;
+    const vp = viewportRef.current;
+    if (!vp) return;
+    onNavigate({
+      x: vp.clientWidth / 2 - canvasX * zoom,
+      y: vp.clientHeight / 2 - canvasY * zoom,
+    });
+  }
+
+  return (
+    <div
+      className="absolute bottom-4 right-4 z-20 rounded-lg border border-gray-200 bg-white/90 backdrop-blur-sm overflow-hidden cursor-crosshair select-none"
+      style={{ width: MINI_W, height: MINI_H }}
+      onClick={onMinimapClick}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+    >
+      {items.map((it) => {
+        const { mx, my } = toMini(it.x, it.y);
+        const ms = Math.max(4, ITEM_W * scale);
+        return (
+          <div
+            key={it.id}
+            className="absolute rounded-sm opacity-75"
+            style={{ left: mx, top: my, width: ms, height: ms, backgroundColor: colorFor(it.type) }}
+          />
+        );
+      })}
+      <div
+        className="absolute border border-gray-400/50 bg-gray-200/30 pointer-events-none rounded-sm"
+        style={{ left: vMx, top: vMy, width: vMW, height: vMH }}
+      />
+    </div>
+  );
+}

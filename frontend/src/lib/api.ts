@@ -22,11 +22,29 @@ supabase.auth.onAuthStateChange((_event, session) => {
   cachedJwt = session?.access_token ?? null;
 });
 
-function authedHeaders(): HeadersInit {
+async function resolveJwt(): Promise<string | null> {
+  if (cachedJwt) return cachedJwt;
+  try {
+    const result = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise<never>((_, reject) => {
+        window.setTimeout(() => reject(new Error("getSession timeout")), 1200);
+      }),
+    ]);
+    const token = result.data.session?.access_token ?? null;
+    if (token) cachedJwt = token;
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+async function authedHeaders(): Promise<HeadersInit> {
+  const jwt = await resolveJwt();
   return {
     "Content-Type": "application/json",
     apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-    ...(cachedJwt ? { Authorization: `Bearer ${cachedJwt}` } : {}),
+    ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
   };
 }
 
@@ -374,10 +392,15 @@ export type VibeBoardPromptItem = VibeBoardItemBase & {
 };
 export type VibeBoardReferenceItem = VibeBoardItemBase & {
   type: "reference";
+  /** Media library asset id when this reference came from the user's
+   *  canonical library or prior uploads. */
+  media_asset_id?: string;
   /** Anthropic file_id once uploaded. */
   anthropic_file_id?: string;
   /** Direct URL of the reference image. */
   url?: string;
+  /** Display name — set by the agent's attach_media_as_reference tool. */
+  name?: string;
   /** Optional caption / description of the reference. */
   caption?: string;
   /** Pen-tool annotations drawn on the full-screen viewer. */
@@ -402,6 +425,26 @@ export type VibeBoard = {
   name: string;
   state: VibeBoardState;
   session_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MediaAsset = {
+  id: string;
+  name: string;
+  storage_path: string;
+  mime: string;
+  size_bytes: number;
+  width: number | null;
+  height: number | null;
+  tags: string[];
+  anthropic_file_id: string | null;
+  source_kind: "pressed_library" | "board_upload" | "board_generated";
+  collection_key: string | null;
+  product_key: string | null;
+  shot_key: string | null;
+  board_id: string | null;
+  status: "pending" | "ready" | "failed";
   created_at: string;
   updated_at: string;
 };

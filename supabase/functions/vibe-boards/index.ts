@@ -15,7 +15,7 @@ import {
   VibeBoardGenerateSchema,
   VibeBoardPatchSchema,
 } from "../_shared/schemas.ts";
-import { AnthropicAgents, AnthropicEnvironments } from "../_shared/anthropic.ts";
+import { AnthropicAgents, AnthropicEnvironments, DEFAULT_THINKING_CONFIG } from "../_shared/anthropic.ts";
 import { IMAGE_TOOL_DEFS } from "../_shared/image_tools.ts";
 import { generateImage } from "../_shared/image_gen.ts";
 import { serviceClient } from "../_shared/supabase.ts";
@@ -208,6 +208,7 @@ router.post("/setup", async (req) => {
         const updated = await AnthropicAgents.update(agentRow.anthropic_id as string, {
           version: agentRow.anthropic_version as number,
           system: DIRECTOR_SYSTEM_PROMPT,
+          thinking: DEFAULT_THINKING_CONFIG,
           tools: wantedTools,
         });
         const { data: row } = await user.db
@@ -232,6 +233,7 @@ router.post("/setup", async (req) => {
       name: DIRECTOR_AGENT_NAME,
       model: ENV.ANTHROPIC_DEFAULT_MODEL,
       system: DIRECTOR_SYSTEM_PROMPT,
+      thinking: DEFAULT_THINKING_CONFIG,
       // Agent toolset (file/bash/text editor + Claude defaults) plus our
       // image tools. The /agents create path also injects KB tools, but here
       // we go directly to AnthropicAgents.create so we explicitly include
@@ -346,6 +348,10 @@ router.post("/:id/generate", async (req, params) => {
         storage_path: storagePath,
         mime: blob.type || "image/png",
         size_bytes: blob.size,
+        source_kind: "board_generated",
+        collection_key: "board-generated",
+        board_id: board.id,
+        status: "ready",
         tags: ["board-generated"],
       })
       .select("id")

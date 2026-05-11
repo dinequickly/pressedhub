@@ -1,10 +1,23 @@
 # Vibes
 
 - The chat experience should feel immediate and alive, especially right after the user sends a message. Dead air before the loader appears breaks trust.
-- Reasoning traces should feel polished and intentional, not like raw debug text dumped into the transcript.
+- Users want raw reasoning traces visible in the transcript, but the framing around them should still feel calm and intentional instead of like a harsh debug console.
+- The idle loader should feel expressive without filler labels: the rotating phrase itself should be the message, with animation noticeable enough to feel alive.
+- Transcript metadata should stay quiet and useful: keep message time tucked into the action row, and avoid standalone filler rows like `activity updated`.
+- If users ask for raw reasoning, show as much as Anthropic actually returns: readable summarized traces plus the opaque signature, without pretending we have access to decrypted hidden thinking.
+- Chat navigation should feel tucked into the main product rail, not like a second competing sidebar. History belongs under `Chat`, and it should stay out of the way unless the user is actually in chat mode.
+- Even inside the rail, chat history should feel contained: show a short recent stack and let overflow scroll inside the subpanel instead of making the whole sidebar longer.
+- If users care about reasoning traces, we should err on the side of attaching live session streams early so we catch ephemeral thinking before it disappears.
 - File attachment should feel native to the composer: lightweight, obvious, and close to the textbox instead of buried elsewhere.
 - Knowledge-base files are part of the everyday chat loop here, not a separate admin-only workflow.
 - The roster should feel like a real shared workboard, not a guessed summary. Agents need a deliberate way to say "WANTS CHAT", "REVIEW DOC", "DONE", or similar statuses in their own words.
 - The product should feel like a workspace, not a model console. Users should see clear actions, files, and outcomes instead of raw reasoning, provider names, ids, or tool transcripts.
 - Friendly labels beat infrastructure jargon here: "Deep focus", "Managed", "Ready to use", and "Sheet helper" land better than model names or backend implementation details.
 - Visual direction should stay soft, calm, and editorial: lighter chrome, better spacing, subtle depth, and fewer hard debug-looking panels.
+- In Image Creator, media-heavy cards should feel as frameless as possible at rest; chrome can come in on hover when the user is about to interact.
+- Image Creator boards should feel tactile and spatial: grab the board to move around it, and zoom directly with scroll instead of relying on stiff browser-like scrolling.
+- Dragging images onto an Image Creator board should feel trustworthy: if the UI says it is adding something, the upload should either complete or clearly tell the user why it failed.
+- Board controls should feel crisp and direct: clicking a trash button or other small control should never accidentally start a drag or need repeat clicks.
+- The Image Creator board list should read like a visual contact sheet, not a mystery grid. At a glance, you should be able to tell which board changed recently, how active it is, and what kinds of images live inside it.
+- Thumbnail previews in Image Creator need to show the board's actual latest work, especially prompt-generated outputs, because placeholders make the app feel broken even when the data exists.
+- Pressed's canonical brand/product imagery should feel like its own trusted library, separate from disposable board uploads and generated experiments, while still being easy for the agent and the user to pull onto a board.

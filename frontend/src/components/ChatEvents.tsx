@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import type { IconType } from "react-icons";
 import {
-  LuMessageSquare, LuActivity, LuTerminal, LuSparkles, LuBot,
+  LuMessageSquare, LuActivity, LuTerminal, LuBot,
   LuBan, LuFileText, LuBrain,
   LuFilePlus, LuPencil, LuFolderSearch, LuSearch, LuGlobe,
   LuBookOpen, LuLibrary, LuPaperclip, LuPlug, LuPuzzle,
@@ -66,11 +66,12 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
-export function extractContent(event: SessionEvent): { thinking: string; text: string } {
+export function extractContent(event: SessionEvent): { thinking: string; text: string; signature: string } {
   const t = event.event_type;
   const p = (event.payload ?? {}) as Record<string, unknown>;
   let thinking = "";
   let text = "";
+  let signature = "";
 
   // Content-block shape: agent.message uses this for text; some thinking
   // variants nest inside a content array too.
@@ -78,6 +79,7 @@ export function extractContent(event: SessionEvent): { thinking: string; text: s
   for (const b of blocks) {
     const bt = b.type as string | undefined;
     if (bt === "thinking" && typeof b.thinking === "string") thinking += b.thinking;
+    if (bt === "thinking" && typeof b.signature === "string") signature ||= b.signature;
     else if (bt === "text" && typeof b.text === "string") text += b.text;
   }
 
@@ -89,12 +91,15 @@ export function extractContent(event: SessionEvent): { thinking: string; text: s
   if (!thinking && t.includes("thinking")) {
     thinking = findStringDeep(p, ["thinking", "text"]) ?? "";
   }
-  return { thinking, text };
+  if (!signature) {
+    signature = findStringDeep(p, ["signature"]) ?? "";
+  }
+  return { thinking, text, signature };
 }
 
 // Depth-limited DFS for a string at any of `keys`. Returns the first match
-// or null. We skip signatures and very short strings so we don't accidentally
-// surface metadata.
+// or null. We skip very short strings so we don't accidentally surface
+// metadata.
 function findStringDeep(
   obj: unknown,
   keys: string[],
@@ -103,7 +108,7 @@ function findStringDeep(
   if (depth > 4 || obj === null || typeof obj !== "object") return null;
   for (const k of keys) {
     const v = (obj as Record<string, unknown>)[k];
-    if (typeof v === "string" && v.length > 2 && k !== "signature") return v;
+    if (typeof v === "string" && v.length > 2) return v;
   }
   for (const v of Object.values(obj as Record<string, unknown>)) {
     if (v && typeof v === "object") {
@@ -175,9 +180,11 @@ function ToolStep({
 
 function MessageActions({
   text,
+  time,
   onRetry,
 }: {
   text: string;
+  time?: string | null;
   onRetry?: (text: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -191,7 +198,7 @@ function MessageActions({
     }
   }
   return (
-    <div className="mt-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+    <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-mono text-ink-400">
       <button
         onClick={copy}
         title={copied ? "Copied" : "Copy"}
@@ -207,6 +214,12 @@ function MessageActions({
         >
           <LuRotateCcw className="size-3.5" />
         </button>
+      )}
+      {time && (
+        <>
+          <span className="text-ink-300">·</span>
+          <span>{relativeTime(time)}</span>
+        </>
       )}
     </div>
   );
@@ -281,22 +294,23 @@ export function EventRow({
 
   if (isNoiseEvent(event)) return null;
 
-  const { thinking, text: msgText } = extractContent(event);
-  if (thinking && (t.includes("thinking") || !msgText)) {
-    return null;
+  const { thinking, text: msgText, signature } = extractContent(event);
+  if ((thinking || signature) && (t.includes("thinking") || t === "agent.message")) {
+    if (t === "agent.message" && msgText) {
+      return (
+        <>
+          <ThinkingTrace text={thinking} signature={signature || null} />
+          <div className="mt-3">
+            <AssistantBubble text={msgText} time={event.processed_at} onRetry={onRetry} />
+          </div>
+        </>
+      );
+    }
+    return <ThinkingTrace text={thinking} signature={signature || null} />;
   }
 
   if (t === "agent.message" && msgText) {
-    return (
-      <div className="flex justify-start group">
-        <div className="max-w-[75%] min-w-0">
-          <div className="bg-white rounded-2xl rounded-tl-md shadow-soft px-4 py-2.5 text-sm text-ink-800 whitespace-pre-wrap">
-            {msgText}
-          </div>
-          <MessageActions text={msgText} onRetry={onRetry} />
-        </div>
-      </div>
-    );
+    return <AssistantBubble text={msgText} time={event.processed_at} onRetry={onRetry} />;
   }
 
   if (t === "user.message") {
@@ -425,14 +439,7 @@ export function EventRow({
     );
   }
 
-  return (
-    <div className="flex items-start gap-2.5">
-      <Bubble icon={LuSparkles} tint="neutral" />
-      <div className="min-w-0 flex-1">
-        <Caption tint="neutral" label="activity updated" time={event.processed_at} />
-      </div>
-    </div>
-  );
+  return null;
 }
 
 // ─── Live activity ──────────────────────────────────────────────────────────
@@ -528,7 +535,9 @@ export function JuiceLoader({ className = "" }: { className?: string }) {
   const juice = useJuicePhrase(true);
   return (
     <div className={`flex items-center gap-2 text-sm text-ink-500 italic ${className}`}>
-      <LuCitrus className="size-4 text-amber-500 animate-pulse" />
+      <span className="activity-citrus-badge size-6 rounded-full bg-amber-50/90">
+        <LuCitrus className="activity-citrus-icon size-3.5 text-amber-500" />
+      </span>
       <span>{juice}…</span>
     </div>
   );
@@ -537,22 +546,27 @@ export function JuiceLoader({ className = "" }: { className?: string }) {
 export function LiveActivity({ events }: { events: SessionEvent[] }) {
   const activity = deriveActivity(events);
   const juice = useJuicePhrase(true);
+  const isJuiceFallback = !activity;
 
   const info: ActivityInfo = activity ?? {
     icon: LuCitrus,
     tint: "amber",
-    title: "Working",
-    detail: juice,
+    title: juice,
+    detail: null,
   };
   const cls = TINT[info.tint];
 
   return (
     <div className="flex items-start gap-2.5">
-      <div className={`size-7 rounded-lg ${cls.bg} ${cls.icon} grid place-items-center shrink-0 mt-0.5 animate-pulse`}>
-        <info.icon className="size-3.5" />
+      <div
+        className={`size-7 rounded-lg ${cls.bg} ${cls.icon} grid place-items-center shrink-0 mt-0.5 ${isJuiceFallback ? "activity-citrus-badge" : "animate-pulse"}`}
+      >
+        <info.icon className={`size-3.5 ${isJuiceFallback ? "activity-citrus-icon" : ""}`} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className={`text-sm font-semibold ${cls.label}`}>{info.title}</div>
+        <div className={`${isJuiceFallback ? "activity-juice-text text-base" : "text-sm"} font-semibold ${cls.label}`}>
+          {info.title}
+        </div>
         {info.detail && (
           <div
             className="mt-0.5 text-sm text-ink-500 line-clamp-2 italic"
@@ -572,8 +586,9 @@ export function LiveActivity({ events }: { events: SessionEvent[] }) {
 // ─── Chat stream ────────────────────────────────────────────────────────────
 // Higher-level renderer used by /chat (not /runs). Groups consecutive tool
 // calls of the same category into a single collapsible summary row
-// ("Ran 2 commands", "Explored 1 file"), renders thinking as always-visible
-// italic prose, and turns recognizable file paths into clickable chips.
+// ("Ran 2 commands", "Explored 1 file"), renders raw reasoning traces as
+// visible transcript items, and turns recognizable file paths into clickable
+// chips.
 
 type ToolCategory =
   | "command" | "explored" | "created" | "edited"
@@ -617,6 +632,7 @@ type ToolStepData = {
 
 type ChatItem =
   | { kind: "user"; event: SessionEvent }
+  | { kind: "thinking"; event: SessionEvent; text: string; signature: string | null }
   | { kind: "assistant"; event: SessionEvent; text: string }
   | { kind: "tool-group"; key: string; category: ToolCategory; steps: ToolStepData[] }
   | { kind: "fallback"; event: SessionEvent };
@@ -686,9 +702,9 @@ export function buildChatItems(events: SessionEvent[]): ChatItem[] {
     // Anything that isn't a tool breaks the group.
     flush();
 
-    const { thinking, text: msgText } = extractContent(e);
-    if (thinking && (t.includes("thinking") || !msgText)) {
-      continue;
+    const { thinking, text: msgText, signature } = extractContent(e);
+    if (thinking || signature) {
+      items.push({ kind: "thinking", event: e, text: thinking, signature: signature || null });
     }
     if (t === "agent.message" && msgText) {
       items.push({ kind: "assistant", event: e, text: msgText });
@@ -850,13 +866,15 @@ export function ChatStream({
       {items.map((item) => {
         switch (item.kind) {
           case "user":
-            return <UserBubble key={item.event.id} event={item.event} />;
+            return <UserBubble key={`${item.event.id}-user`} event={item.event} />;
+          case "thinking":
+            return <ThinkingTrace key={`${item.event.id}-thinking`} text={item.text} signature={item.signature} />;
           case "assistant":
-            return <AssistantBubble key={item.event.id} text={item.text} onRetry={onRetry} />;
+            return <AssistantBubble key={`${item.event.id}-assistant`} text={item.text} time={item.event.processed_at} onRetry={onRetry} />;
           case "tool-group":
             return <ToolGroup key={item.key} category={item.category} steps={item.steps} onOpenFile={onOpenFile} />;
           case "fallback":
-            return <EventRow key={item.event.id} event={item.event} />;
+            return <EventRow key={`${item.event.id}-fallback`} event={item.event} />;
         }
       })}
     </>
@@ -877,15 +895,47 @@ function UserBubble({ event }: { event: SessionEvent }) {
   );
 }
 
-function AssistantBubble({ text, onRetry }: { text: string; onRetry?: (text: string) => void }) {
+function AssistantBubble({
+  text,
+  time,
+  onRetry,
+}: {
+  text: string;
+  time?: string | null;
+  onRetry?: (text: string) => void;
+}) {
   return (
-    <div className="flex justify-start group">
+    <div className="flex justify-start">
       <div className="max-w-[75%] min-w-0">
         <div
           className="bg-white rounded-2xl rounded-tl-md shadow-soft px-4 py-2.5 text-sm text-ink-800 markdown-body"
           dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
         />
-        <MessageActions text={text} onRetry={onRetry} />
+        <MessageActions text={text} time={time} onRetry={onRetry} />
+      </div>
+    </div>
+  );
+}
+
+function ThinkingTrace({ text, signature }: { text: string; signature?: string | null }) {
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[78%] min-w-0 rounded-2xl rounded-tl-md border border-indigo-100/80 bg-indigo-50/70 px-4 py-3 shadow-soft">
+        <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.18em] text-indigo-600">
+          <LuBrain className="size-3.5" />
+          Reasoning trace
+        </div>
+        <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink-700">
+          {text || "Thinking text omitted; preserved signature returned by Anthropic."}
+        </div>
+        {signature && (
+          <div className="mt-3 rounded-xl border border-indigo-200/80 bg-white/70 px-3 py-2">
+            <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-indigo-500">Signature</div>
+            <div className="mt-1 break-all font-mono text-[11px] leading-5 text-ink-500">
+              {signature}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

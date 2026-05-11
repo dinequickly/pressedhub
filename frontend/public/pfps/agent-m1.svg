@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <rect width="200" height="200" fill="#9fa8d0"/>
+  <!-- head -->
+  <ellipse cx="100" cy="70" rx="30" ry="34" fill="white"/>
+  <!-- shoulders / body -->
+  <path d="M22 200 Q48 125 100 116 Q152 125 178 200 Z" fill="white"/>
+  <!-- neck -->
+  <rect x="88" y="100" width="24" height="20" rx="4" fill="white"/>
+</svg>

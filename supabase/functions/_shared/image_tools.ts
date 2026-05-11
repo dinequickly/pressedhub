@@ -139,11 +139,18 @@ export const IMAGE_TOOL_DEFS: Array<Record<string, unknown>> = [
     type: "custom",
     name: "list_media",
     description:
-      "List the user's brand assets and reference imagery from the media library (separate from the KB). Filterable by tag (e.g. 'pressed-assets') or a search string against filename. Returns metadata + media_id you can pass to attach_media_as_reference. Use this when the user asks you to use brand assets, references, prior campaign imagery, or anything from the media library. Lightweight — call freely to discover what's available.",
+      "List the user's media library assets (separate from the KB). Supports canonical Pressed library imagery, board uploads, and generated outputs. Filter by tag, source_kind, product_key, shot_key, or a filename search string. Returns metadata + media_id you can pass to attach_media_as_reference. Use this whenever the user asks for brand assets, product shots, references, or prior generated imagery.",
     input_schema: {
       type: "object",
       properties: {
         tag: { type: "string", description: "Filter to assets carrying this tag." },
+        source_kind: {
+          type: "string",
+          enum: ["pressed_library", "board_upload", "board_generated"],
+          description: "Filter by asset class.",
+        },
+        product_key: { type: "string", description: "Filter canonical assets to one product family." },
+        shot_key: { type: "string", description: "Filter canonical assets to one shot type like front, back, blue-shot, or lifestyle." },
         q: { type: "string", description: "Search filename for this substring (case-insensitive)." },
         limit: { type: "integer", minimum: 1, maximum: 200, description: "Max results, default 50." },
       },
@@ -153,7 +160,7 @@ export const IMAGE_TOOL_DEFS: Array<Record<string, unknown>> = [
     type: "custom",
     name: "prompt_via_card",
     description:
-      "Create a prompt card on the active vibe board with the given prompt text and model, then generate one image from it. The card and its first generation appear on the canvas immediately. Prefer this over generate_image_openai/gemini when you want the user to be able to iterate on the prompt themselves — the prompt is editable, additional generations can be cycled with arrows, and it integrates into the user's flow.",
+      "Create a prompt card on the active vibe board with the given prompt text and model, then generate one image from it. The card and its first generation appear on the canvas immediately. Prefer this over generate_image_openai/gemini when you want the user to be able to iterate on the prompt themselves — the prompt is editable, additional generations can be cycled with arrows, and it integrates into the user's flow. Pass attachment_media_ids to condition the generation on reference images (e.g. a Pressed library product shot) — they appear as reference chips on the card so the user sees exactly what was used.",
     input_schema: {
       type: "object",
       properties: {
@@ -162,6 +169,11 @@ export const IMAGE_TOOL_DEFS: Array<Record<string, unknown>> = [
           type: "string",
           enum: ["openai", "gemini-fast", "gemini-quality"],
           description: "Vendor + tier. Default 'gemini-fast'.",
+        },
+        attachment_media_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "media_asset ids to attach as reference images. The gen vendor sees these as conditioning inputs. Use this to ground generations in Pressed library product shots — pass the id(s) from list_media here instead of calling attach_media_as_reference separately.",
         },
         x: { type: "number", description: "Canvas x in pixels (default 600)." },
         y: { type: "number", description: "Canvas y in pixels (default 400)." },
@@ -461,6 +473,9 @@ async function runListMedia(
   input: Record<string, unknown>,
 ): Promise<string> {
   const tag = typeof input.tag === "string" ? input.tag : null;
+  const sourceKind = typeof input.source_kind === "string" ? input.source_kind : null;
+  const productKey = typeof input.product_key === "string" ? input.product_key : null;
+  const shotKey = typeof input.shot_key === "string" ? input.shot_key : null;
   const q = typeof input.q === "string" ? input.q : null;
   const limit = clampInt(input.limit, 50, 1, 200);
 
@@ -469,11 +484,14 @@ async function runListMedia(
   const sc = serviceClient();
   let query = sc
     .from("media_assets")
-    .select("id,name,mime,size_bytes,width,height,tags,anthropic_file_id,created_at")
+    .select("id,name,mime,size_bytes,width,height,tags,anthropic_file_id,source_kind,collection_key,product_key,shot_key,status,created_at")
     .eq("owner_id", ownerId)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (tag) query = query.contains("tags", [tag]);
+  if (sourceKind) query = query.eq("source_kind", sourceKind);
+  if (productKey) query = query.eq("product_key", productKey);
+  if (shotKey) query = query.eq("shot_key", shotKey);
   if (q) query = query.ilike("name", `%${q}%`);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -487,6 +505,11 @@ async function runListMedia(
       width: a.width,
       height: a.height,
       tags: a.tags ?? [],
+      source_kind: a.source_kind,
+      collection_key: a.collection_key ?? null,
+      product_key: a.product_key ?? null,
+      shot_key: a.shot_key ?? null,
+      status: a.status,
       // Note: anthropic_file_id may be null until first attach.
       anthropic_file_id: a.anthropic_file_id ?? null,
     })),
@@ -511,7 +534,7 @@ async function runAttachMedia(
   const sc = serviceClient();
   const { data: asset, error } = await sc
     .from("media_assets")
-    .select("id,name,storage_path,mime,anthropic_file_id,owner_id")
+    .select("id,name,storage_path,mime,anthropic_file_id,owner_id,source_kind,product_key,shot_key")
     .eq("id", mediaId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -543,7 +566,9 @@ async function runAttachMedia(
     type: "reference",
     x, y,
     anthropic_file_id: aid,
+    media_asset_id: mediaId,
     caption: caption ?? asset.name,
+    name: asset.name,
   };
   const items = Array.isArray(state.items) ? state.items : [];
   const next = { ...state, items: [...items, newItem] };
@@ -554,6 +579,7 @@ async function runAttachMedia(
     attached: true,
     item_id: newItem.id,
     anthropic_file_id: aid,
+    media_asset_id: mediaId,
     name: asset.name,
   });
 }
@@ -579,19 +605,52 @@ async function runPromptViaCard(
   const x = typeof input.x === "number" ? input.x : 600;
   const y = typeof input.y === "number" ? input.y : 400;
   const parentId = typeof input.parent_id === "string" ? input.parent_id : undefined;
+  const attachmentMediaIds = Array.isArray(input.attachment_media_ids)
+    ? (input.attachment_media_ids as unknown[]).filter((v): v is string => typeof v === "string")
+    : [];
 
   const { boardId, ownerId, state } = await resolveBoard(ctx);
+  const sc = serviceClient();
+
+  // Resolve attachment ids → blobs for conditioning the gen vendor, and
+  // build the attachments array that appears as reference chips on the card.
+  type CardAttachment = { id: string; media_asset_id: string; name: string; mime: string };
+  const cardAttachments: CardAttachment[] = [];
+  const referenceBlobs: Blob[] = [];
+  for (const mediaId of attachmentMediaIds) {
+    const { data: asset, error } = await sc
+      .from("media_assets")
+      .select("id,name,storage_path,mime,owner_id")
+      .eq("id", mediaId)
+      .maybeSingle();
+    if (error || !asset) continue;
+    if (asset.owner_id !== ownerId) continue;
+    const { data: blob, error: dlErr } = await sc.storage
+      .from("media")
+      .download(asset.storage_path as string);
+    if (dlErr || !blob) continue;
+    const mime = (asset.mime as string) || "image/png";
+    referenceBlobs.push(new Blob([await blob.arrayBuffer()], { type: mime }));
+    cardAttachments.push({
+      id: `att_${Math.random().toString(36).slice(2, 10)}`,
+      media_asset_id: mediaId,
+      name: asset.name as string,
+      mime,
+    });
+  }
 
   // Generate one image. The vendor module throws a typed error if the key
   // is missing — bubble that up so the agent can switch vendors.
-  const blobs = await generateImage(model, prompt, { n: 1 });
+  const blobs = await generateImage(model, prompt, {
+    n: 1,
+    references: referenceBlobs.length > 0 ? referenceBlobs : undefined,
+  });
   if (blobs.length === 0) throw new Error("Image generation produced no data");
   const blob = blobs[0];
 
   // Upload to the media bucket and insert a media_assets row, mirroring the
   // /vibe-boards/:id/generate path so the canvas resolves bytes through the
   // standard /media/:id/content endpoint.
-  const sc = serviceClient();
   const ext = blob.type.includes("jpeg") ? "jpg" : "png";
   const filename = `gen_${Date.now()}_0.${ext}`;
   const assetId = crypto.randomUUID();
@@ -613,6 +672,10 @@ async function runPromptViaCard(
       storage_path: storagePath,
       mime: blob.type || "image/png",
       size_bytes: blob.size,
+      source_kind: "board_generated",
+      collection_key: "board-generated",
+      board_id: boardId,
+      status: "ready",
       tags: ["board-generated"],
     })
     .select("id")
@@ -630,6 +693,7 @@ async function runPromptViaCard(
     y,
     text: prompt,
     model,
+    ...(cardAttachments.length > 0 ? { attachments: cardAttachments } : {}),
     generations: [{
       id: generationId,
       media_asset_id: row.id as string,

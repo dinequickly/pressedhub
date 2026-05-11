@@ -1,55 +1,105 @@
-// /roster — agents-on-payroll, rendered as a corkboard of sticky notes. Each
-// agent gets a deterministic paper color + tilt, a "tape" strip, a rubber-
-// stamped status badge, the agent's emoji as a watermark, and a tear-off mono
-// footer with the schedule. Click the note to continue chatting; hover to
-// reveal pause / run / settings actions in the corner.
+// /roster — agent cards styled like the mockup: avatar + name header, message
+// body, stat sidebar, sparkline, and contextual CTA buttons (Review / Needs
+// Help / Open Files depending on roster_status.cta + tone).
 
-import { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  LuLoader, LuPause, LuPlay, LuZap, LuSettings,
+  LuLoader, LuPause, LuPlay, LuZap, LuSettings, LuMessageSquare,
+  LuFileText, LuEllipsis, LuArrowUpDown,
 } from "react-icons/lu";
 import { api, type Environment, type RosterEntry, type Session } from "../lib/api";
 import { refresh, useApi } from "../lib/swr";
 import { EmptyState, Page } from "../components/Page";
 import { humanCron } from "../lib/cron";
 
+type Tone = "ok" | "warn" | "running" | "idle";
+type SortKey = "last_run" | "next_run" | "name";
+type FilterKey = "all" | "needs_review" | "running" | "paused";
+
+const STATUS_CFG: Record<string, { dot: string; label: string }> = {
+  warn:    { dot: "#f97316", label: "Needs Review" },
+  running: { dot: "#8b5cf6", label: "On It"        },
+  ok:      { dot: "#22c55e", label: "Done"          },
+  idle:    { dot: "#94a3b8", label: "Standby"       },
+  paused:  { dot: "#94a3b8", label: "Paused"        },
+};
+
 export function RosterPage() {
   const { data, isLoading, mutate } = useApi<{ data: RosterEntry[] }>("/schedules/roster");
   const nav = useNavigate();
-  const entries = data?.data ?? [];
+  const [sort, setSort] = useState<SortKey>("last_run");
+  const [filter, setFilter] = useState<FilterKey>("all");
+  const allEntries = data?.data ?? [];
+
+  const entries = useMemo(() => {
+    let list = [...allEntries];
+    if (filter === "needs_review") list = list.filter(e => derive(e).tone === "warn");
+    else if (filter === "running") list = list.filter(e => derive(e).tone === "running");
+    else if (filter === "paused") list = list.filter(e => e.status === "paused");
+    list.sort((a, b) => {
+      if (sort === "name") return a.agent.name.localeCompare(b.agent.name);
+      if (sort === "next_run") return a.next_run_at.localeCompare(b.next_run_at);
+      return (b.last_run_at ?? "").localeCompare(a.last_run_at ?? "");
+    });
+    return list;
+  }, [allEntries, sort, filter]);
+
+  const reviewCount = allEntries.filter(e => derive(e).tone === "warn").length;
+
+  const SORT_LABELS: Record<SortKey, string> = { last_run: "Last run", next_run: "Next run", name: "Name" };
+  const FILTER_CYCLE: FilterKey[] = ["all", "needs_review", "running", "paused"];
+  const FILTER_LABELS: Record<FilterKey, string> = {
+    all: "All agents",
+    needs_review: `Needs Review${reviewCount > 0 ? ` (${reviewCount})` : ""}`,
+    running: "Running",
+    paused: "Paused",
+  };
 
   return (
-    <Page
-      title="Roster"
-      subtitle="Notes from your agents on payroll."
-    >
-      {/* Subtle corkboard backdrop: warm paper-ish tone with a faint dot grid. */}
-      <div
-        className="p-8 min-h-full"
-        style={{
-          backgroundColor: "#f5efe4",
-          backgroundImage:
-            "radial-gradient(circle, rgba(120,95,60,0.18) 1px, transparent 1px)",
-          backgroundSize: "18px 18px",
-        }}
-      >
+    <Page title="Roster" subtitle="Your agents on the clock.">
+      <div className="px-6 py-4 min-h-full">
+        {/* Toolbar */}
+        <div className="flex items-center gap-2 mb-5">
+          <button
+            onClick={() => setFilter(f => {
+              const i = FILTER_CYCLE.indexOf(f);
+              return FILTER_CYCLE[(i + 1) % FILTER_CYCLE.length];
+            })}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-neutral-200 bg-white text-sm text-ink-700 hover:border-neutral-300 hover:shadow-sm transition-all"
+          >
+            {filter !== "all" && (
+              <span
+                className="size-2 rounded-full"
+                style={{ backgroundColor: filter === "needs_review" ? "#f97316" : filter === "running" ? "#8b5cf6" : "#94a3b8" }}
+              />
+            )}
+            {FILTER_LABELS[filter]}
+            <span className="text-ink-300 text-xs">▾</span>
+          </button>
+
+          <button
+            onClick={() => setSort(s => s === "last_run" ? "next_run" : s === "next_run" ? "name" : "last_run")}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200 bg-white text-sm text-ink-700 hover:border-neutral-300 hover:shadow-sm transition-all ml-auto"
+          >
+            <LuArrowUpDown className="size-3.5 text-ink-400" />
+            Sort: {SORT_LABELS[sort]}
+          </button>
+        </div>
+
         {isLoading ? (
-          <div className="text-sm text-ink-500">Loading…</div>
+          <div className="text-sm text-ink-500 flex items-center gap-2 py-8">
+            <LuLoader className="animate-spin size-4" /> Loading…
+          </div>
         ) : entries.length === 0 ? (
           <EmptyState
-            title="No agents scheduled yet"
-            body="Pin your first note: open an agent and add a schedule from the Schedule tab."
+            title={filter !== "all" ? "No agents match this filter" : "No agents scheduled yet"}
+            body={filter !== "all" ? "Try clearing the filter above." : "Open an agent and add a schedule from the Schedule tab."}
           />
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-8 pt-2">
-            {entries.map((e) => (
-              <RosterTile
-                key={e.id}
-                entry={e}
-                onChanged={() => mutate()}
-                onSettings={() => nav(`/agents/${e.agent.id}`)}
-              />
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-w-6xl">
+            {entries.map(e => (
+              <RosterCard key={e.id} entry={e} onChanged={() => mutate()} onSettings={() => nav(`/agents/${e.agent.id}`)} />
             ))}
           </div>
         )}
@@ -58,8 +108,6 @@ export function RosterPage() {
   );
 }
 
-// Mirror AgentDetailPage's session-bootstrap: pick the latest environment, or
-// create a default one if none exists, then POST /sessions like /runs does.
 async function startChat(entry: RosterEntry): Promise<Session> {
   const fresh = await api.get<{ data: Environment[] }>("/environments");
   let env = fresh.data?.[0];
@@ -77,224 +125,56 @@ async function startChat(entry: RosterEntry): Promise<Session> {
   });
 }
 
-// Deterministic per-id helpers so notes don't visually shuffle on every render.
-function hash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
-// Real Post-it-ish pastels. Arbitrary hex so we get the desk-supply feel
-// instead of the default Tailwind palette.
-const PAPERS: Array<{ bg: string; edge: string; ink: string }> = [
-  { bg: "#FFF1A6", edge: "#E8D770", ink: "#5b4a14" }, // canary yellow
-  { bg: "#FFD3D9", edge: "#F0A6B0", ink: "#5b1f2a" }, // bubblegum pink
-  { bg: "#C9E5FF", edge: "#9DC8F2", ink: "#143352" }, // sky
-  { bg: "#C9F0CE", edge: "#9CD7A4", ink: "#1c4a26" }, // mint
-  { bg: "#E2D6FF", edge: "#BFA9F2", ink: "#352060" }, // lavender
-  { bg: "#FFD9B3", edge: "#F2B57E", ink: "#5b3010" }, // peach
-];
-
-const TAPES = [
-  "rgba(255,255,255,0.55)",
-  "rgba(245,222,179,0.6)",   // masking-tape beige
-  "rgba(200,220,235,0.55)",  // pale blue
-];
-
-function paperFor(id: string) {
-  return PAPERS[hash(id) % PAPERS.length];
-}
-function tiltFor(id: string): number {
-  // -2.4..+2.4 deg, in 0.4 steps so tiles feel hand-placed but not chaotic.
-  const slot = hash(id + "tilt") % 13;
-  return (slot - 6) * 0.4;
-}
-function tapeFor(id: string) {
-  const tape = TAPES[hash(id + "tape") % TAPES.length];
-  const skew = (hash(id + "skew") % 11) - 5; // -5..+5 deg
-  const offset = (hash(id + "off") % 30) - 15; // -15..+15 px from center
-  return { tape, skew, offset };
-}
-
-type Tone = "ok" | "warn" | "running" | "idle";
-
-const STAMP: Record<Tone, { label: string; color: string }> = {
-  ok:      { label: "DONE",       color: "#1f7a3a" },
-  warn:    { label: "NEEDS YOU",  color: "#a35a00" },
-  running: { label: "ON IT",      color: "#5b2cd1" },
-  idle:    { label: "STANDBY",    color: "#5a5a5a" },
-};
-
-function RosterTile({
-  entry, onSettings, onChanged,
-}: { entry: RosterEntry; onSettings: () => void; onChanged: () => void }) {
+function RosterCard({
+  entry, onChanged, onSettings,
+}: { entry: RosterEntry; onChanged: () => void; onSettings: () => void }) {
   const status = derive(entry);
   const nav = useNavigate();
   const [opening, setOpening] = useState(false);
-  const paper = paperFor(entry.id);
-  const tilt = tiltFor(entry.id);
-  const tape = tapeFor(entry.id);
-  const stamp = STAMP[status.color];
-  const stampLabel = status.label ?? stamp.label;
+  const [busy, setBusy] = useState<"toggle" | "run" | null>(null);
 
-  async function open() {
-    if (opening) return;
-    const last = entry.last_session;
-    if (last && last.status !== "terminated") {
-      nav(`/runs/${last.id}`);
-      return;
-    }
-    setOpening(true);
-    try {
-      const session = await startChat(entry);
-      refresh("/sessions");
-      nav(`/runs/${session.id}`);
-    } catch (err) {
-      alert(`Could not start chat: ${(err as Error).message}`);
-      setOpening(false);
-    }
+  const cfgKey = entry.status === "paused" ? "paused" : status.tone;
+  const cfg = STATUS_CFG[cfgKey] ?? STATUS_CFG.idle;
+  const rs = entry.last_session?.roster_status;
+  const [,, orbMid, orbDark] = orbTheme(entry.agent.id);
+
+  // Derive primary CTA
+  let ctaLabel = "Chat";
+  let ctaIsHighlighted = false;
+  if (rs?.cta === "open_files") {
+    ctaLabel = "Open Files";
+  } else if (status.tone === "warn") {
+    ctaLabel = "Review";
+    ctaIsHighlighted = true;
+  } else if (entry.last_session?.status === "idle") {
+    ctaLabel = "Needs Help";
+    ctaIsHighlighted = true;
   }
 
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={open}
-      onKeyDown={(e) => { if (e.key === "Enter") open(); }}
-      aria-busy={opening}
-      className="group relative cursor-pointer select-none transition-[transform,box-shadow] duration-200 ease-out hover:-translate-y-1 hover:rotate-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
-      style={{
-        transform: `rotate(${tilt}deg)`,
-        backgroundColor: paper.bg,
-        color: paper.ink,
-        border: `1px solid ${paper.edge}`,
-        borderRadius: "4px",
-        padding: "26px 22px 18px",
-        minHeight: 220,
-        boxShadow:
-          "0 1px 1px rgba(0,0,0,0.08), 0 8px 16px -6px rgba(60,40,10,0.20), 0 18px 28px -10px rgba(60,40,10,0.18)",
-      }}
-    >
-      {/* Tape strip across the top */}
-      <span
-        aria-hidden
-        className="absolute pointer-events-none"
-        style={{
-          top: -8,
-          left: `calc(50% + ${tape.offset}px)`,
-          transform: `translateX(-50%) rotate(${tape.skew}deg)`,
-          width: 78,
-          height: 20,
-          background: tape.tape,
-          boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.4), 0 1px 2px rgba(0,0,0,0.08)",
-        }}
-      />
+  async function openPrimary() {
+    if (opening) return;
+    if (rs?.cta === "open_files") {
+      if (entry.last_session) nav(`/runs/${entry.last_session.id}`);
+      return;
+    }
+    // Open the chat page and let the user start/configure the session there
+    nav("/chat", { state: { newChatAgentId: entry.agent.id } });
+  }
 
-      {/* Watermark emoji in the back */}
-      <span
-        aria-hidden
-        className="absolute pointer-events-none select-none"
-        style={{
-          right: -6, bottom: -10,
-          fontSize: 132,
-          opacity: 0.09,
-          lineHeight: 1,
-          transform: "rotate(-8deg)",
-        }}
-      >
-        {entry.agent.emoji || "🤖"}
-      </span>
-
-      {/* Rubber stamp */}
-      <span
-        aria-hidden
-        className="absolute font-mono uppercase tracking-[0.18em] text-[10px] font-bold whitespace-nowrap"
-        style={{
-          top: 14, right: 18,
-          color: stamp.color,
-          border: `2px solid ${stamp.color}`,
-          borderRadius: 4,
-          padding: "2px 8px",
-          opacity: 0.8,
-          transform: "rotate(-6deg)",
-          background: "transparent",
-          boxShadow: `inset 0 0 0 1px ${stamp.color}22`,
-        }}
-      >
-        {entry.status === "paused" ? "PAUSED" : stampLabel}
-      </span>
-
-      {/* Header: agent name + the job this note is about */}
-      <div className="relative pr-24">
-        <h3 className="text-2xl font-bold tracking-tight leading-tight">
-          {entry.agent.name}
-        </h3>
-        <div className="text-[11px] font-mono uppercase tracking-[0.15em] opacity-65 mt-1 truncate">
-          re: {entry.name}
-        </div>
-      </div>
-
-      {/* The note — what the agent has to say */}
-      <div className="relative mt-4 text-[15px] leading-snug italic opacity-90">
-        {status.color === "running" && (
-          <LuLoader className="inline size-3.5 mr-1 -mt-0.5 animate-spin opacity-70" />
-        )}
-        <span className="opacity-50">“</span>
-        {status.message}
-        <span className="opacity-50">”</span>
-      </div>
-
-      {/* Tear-off footer */}
-      <div
-        className="relative mt-5 pt-2 font-mono text-[10px] uppercase tracking-[0.15em] flex flex-wrap gap-x-3 gap-y-1"
-        style={{ borderTop: `1px dashed ${paper.edge}`, opacity: 0.7 }}
-      >
-        <span>{humanCron(entry.cron, entry.timezone)}</span>
-        <span>·</span>
-        <span>{entry.last_run_at ? `last ${relative(entry.last_run_at)}` : "never"}</span>
-        <span>·</span>
-        <span>next {relative(entry.next_run_at)}</span>
-        {opening && (
-          <>
-            <span>·</span>
-            <span className="inline-flex items-center gap-1">
-              <LuLoader className="size-3 animate-spin" /> opening
-            </span>
-          </>
-        )}
-      </div>
-
-      {/* Hover-revealed actions, tucked at the bottom-right corner */}
-      <Actions
-        entry={entry}
-        onChanged={onChanged}
-        onSettings={onSettings}
-        ink={paper.ink}
-      />
-    </div>
-  );
-}
-
-function Actions({
-  entry, onChanged, onSettings, ink,
-}: {
-  entry: RosterEntry;
-  onChanged: () => void;
-  onSettings: () => void;
-  ink: string;
-}) {
-  const [busy, setBusy] = useState<"toggle" | "run" | null>(null);
-  const paused = entry.status === "paused";
+  function openLogs() {
+    if (entry.last_session) nav(`/runs/${entry.last_session.id}`);
+  }
 
   async function toggle(e: React.MouseEvent) {
     e.stopPropagation();
     if (busy) return;
+    const paused = entry.status === "paused";
     setBusy("toggle");
     try {
       await api.patch(`/schedules/${entry.id}`, { status: paused ? "active" : "paused" });
       onChanged();
     } catch (err) {
-      alert(`Could not ${paused ? "resume" : "pause"} schedule: ${(err as Error).message}`);
+      alert(`Could not ${paused ? "resume" : "pause"}: ${(err as Error).message}`);
     } finally { setBusy(null); }
   }
 
@@ -303,94 +183,307 @@ function Actions({
     if (busy) return;
     setBusy("run");
     try {
-      if (paused) await api.patch(`/schedules/${entry.id}`, { status: "active" });
+      if (entry.status === "paused") await api.patch(`/schedules/${entry.id}`, { status: "active" });
       await api.post(`/schedules/${entry.id}/run`);
       onChanged();
     } catch (err) {
-      alert(`Could not run now: ${(err as Error).message}`);
+      alert(`Could not run: ${(err as Error).message}`);
     } finally { setBusy(null); }
   }
 
+  const accent = entry.agent.accent || "#6366f1";
+
   return (
-    <div
-      className="absolute bottom-3 right-3 flex items-center gap-0.5 opacity-25 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
-      style={{ color: ink }}
-    >
-      <IconBtn
-        title={paused ? "Resume schedule" : "Pause schedule"}
-        onClick={toggle}
-        loading={busy === "toggle"}
+    <div className="bg-white rounded-2xl border border-neutral-200 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_20px_rgba(0,0,0,0.03)] flex flex-col overflow-hidden">
+      {/* Avatar banner */}
+      <div
+        className="flex justify-center pt-5 pb-4"
+        style={{ background: `linear-gradient(160deg, ${accent}12 0%, ${accent}06 100%)` }}
       >
-        {paused ? <LuPlay className="size-3.5" /> : <LuPause className="size-3.5" />}
-      </IconBtn>
-      <IconBtn title="Run now" onClick={runNow} loading={busy === "run"}>
-        <LuZap className="size-3.5" />
-      </IconBtn>
-      <IconBtn
-        title="Agent settings"
-        onClick={(e) => { e.stopPropagation(); onSettings(); }}
-      >
-        <LuSettings className="size-3.5" />
-      </IconBtn>
+        <OrbAvatar seed={entry.agent.id} size={72} />
+      </div>
+
+      {/* Name + status */}
+      <div className="px-4 pb-3 text-center">
+        <h3 className="text-[14px] font-medium text-ink-900 leading-tight">{entry.agent.name}</h3>
+        <div className="text-[11px] text-ink-400 mt-0.5">{entry.name}</div>
+        <div className="flex items-center justify-center mt-2">
+          {cfgKey === "warn" ? (
+            <span
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide border"
+              style={{ backgroundColor: orbMid + "20", color: orbDark, borderColor: orbMid + "50" }}
+            >
+              <span className="size-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: orbMid }} />
+              {cfg.label}
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <span className="size-1.5 rounded-full" style={{ backgroundColor: cfg.dot }} />
+              <span className="text-[10px] uppercase tracking-widest text-ink-500 font-medium">{cfg.label}</span>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Message body */}
+      <div className="px-4 pb-3 flex-1">
+        <p className="text-sm text-ink-600 leading-relaxed">
+          {status.tone === "running" && (
+            <LuLoader className="inline size-3 mr-1 -mt-0.5 animate-spin text-violet-400" />
+          )}
+          {stripMd(status.message)}
+        </p>
+      </div>
+
+      {/* Stats row */}
+      <div className="mx-4 mb-4 grid grid-cols-2 gap-2">
+        <div className="rounded-xl bg-neutral-50 px-3 py-2">
+          <div className="text-[10px] text-ink-400 uppercase tracking-wide">Last run</div>
+          <div className="text-sm font-medium text-ink-800 mt-0.5">
+            {entry.last_run_at ? relative(entry.last_run_at) : "Never"}
+          </div>
+        </div>
+        <div className="rounded-xl bg-neutral-50 px-3 py-2">
+          <div className="text-[10px] text-ink-400 uppercase tracking-wide">Next run</div>
+          <div className={`text-sm font-medium mt-0.5 ${entry.status !== "paused" && new Date(entry.next_run_at) < new Date() ? "text-orange-500" : "text-ink-800"}`}>
+            {entry.status === "paused" ? "—" : relative(entry.next_run_at)}
+          </div>
+        </div>
+      </div>
+
+      {/* Footer action row */}
+      <div className="border-t border-neutral-100 flex divide-x divide-neutral-100">
+        <FooterBtn
+          label={opening ? "Opening…" : ctaLabel}
+          highlighted={ctaIsHighlighted}
+          accentBg={orbMid}
+          icon={rs?.cta === "open_files" ? <LuFileText className="size-3.5" /> : <LuMessageSquare className="size-3.5" />}
+          onClick={openPrimary}
+          disabled={opening}
+        />
+        <FooterBtn
+          label="Ask"
+          icon={<LuMessageSquare className="size-3.5" />}
+          onClick={openPrimary}
+        />
+        <FooterBtn
+          label="Logs"
+          onClick={openLogs}
+          disabled={!entry.last_session}
+        />
+        <MoreBtn
+          paused={entry.status === "paused"}
+          busy={busy}
+          onToggle={toggle}
+          onRunNow={runNow}
+          onSettings={onSettings}
+        />
+      </div>
     </div>
   );
 }
 
-function IconBtn({
-  children, onClick, title, loading,
+
+function FooterBtn({
+  label, icon, highlighted, accentBg, onClick, disabled,
 }: {
-  children: React.ReactNode;
-  onClick: (e: React.MouseEvent) => void;
-  title: string;
-  loading?: boolean;
+  label: string;
+  icon?: React.ReactNode;
+  highlighted?: boolean;
+  accentBg?: string;
+  onClick?: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
-      title={title}
-      aria-label={title}
-      disabled={loading}
+      disabled={disabled}
       onClick={onClick}
-      className="size-7 grid place-items-center rounded-md hover:bg-black/10 disabled:opacity-40 transition-colors"
+      className="flex-1 py-2.5 text-xs font-medium flex items-center justify-center gap-1.5 transition-all disabled:opacity-40"
+      style={highlighted
+        ? { backgroundColor: accentBg ?? "#171717", color: "#fff" }
+        : { color: "#6b7280" }
+      }
+      onMouseEnter={e => { if (!highlighted) (e.currentTarget as HTMLButtonElement).style.backgroundColor = "#f9fafb"; }}
+      onMouseLeave={e => { if (!highlighted) (e.currentTarget as HTMLButtonElement).style.backgroundColor = ""; }}
     >
-      {loading ? <LuLoader className="size-3.5 animate-spin" /> : children}
+      {icon}
+      {label}
     </button>
   );
 }
 
-function derive(entry: RosterEntry): { message: string; color: Tone; label?: string | null } {
-  if (entry.status === "paused") return { message: "On break.", color: "idle" };
-  const ls = entry.last_session;
-  if (!ls) return { message: "Pinned and waiting for the first shift.", color: "idle" };
-  const roster = ls.roster_status;
-  if (roster?.summary) {
-    return {
-      message: snippet(roster.summary) ?? roster.summary,
-      color: roster.tone,
-      label: snippet(roster.label, 18),
-    };
+function MoreBtn({
+  paused, busy, onToggle, onRunNow, onSettings,
+}: {
+  paused: boolean;
+  busy: "toggle" | "run" | null;
+  onToggle: (e: React.MouseEvent) => void;
+  onRunNow: (e: React.MouseEvent) => void;
+  onSettings: () => void;
+}) {
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const btnRef = React.useRef<HTMLButtonElement>(null);
+
+  function openMenu() {
+    if (!btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
   }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={openMenu}
+        className="w-10 py-2.5 flex items-center justify-center text-ink-400 hover:text-ink-600 hover:bg-neutral-50 transition-colors"
+      >
+        <LuEllipsis className="size-4" />
+      </button>
+      {pos && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setPos(null)} />
+          <div
+            className="fixed z-50 bg-white border border-neutral-200 rounded-xl shadow-lg py-1 min-w-[140px] text-sm"
+            style={{ top: pos.top, right: pos.right }}
+          >
+            <button
+              className="w-full px-3 py-1.5 text-left text-ink-700 hover:bg-neutral-50 flex items-center gap-2"
+              onClick={(e) => { setPos(null); onToggle(e); }}
+            >
+              {busy === "toggle"
+                ? <LuLoader className="size-3.5 animate-spin" />
+                : paused ? <LuPlay className="size-3.5" /> : <LuPause className="size-3.5" />}
+              {paused ? "Resume" : "Pause"}
+            </button>
+            <button
+              className="w-full px-3 py-1.5 text-left text-ink-700 hover:bg-neutral-50 flex items-center gap-2"
+              onClick={(e) => { setPos(null); onRunNow(e); }}
+            >
+              {busy === "run" ? <LuLoader className="size-3.5 animate-spin" /> : <LuZap className="size-3.5" />}
+              Run now
+            </button>
+            <button
+              className="w-full px-3 py-1.5 text-left text-ink-700 hover:bg-neutral-50 flex items-center gap-2"
+              onClick={() => { setPos(null); onSettings(); }}
+            >
+              <LuSettings className="size-3.5" />
+              Settings
+            </button>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+
+// [veryLight, light, mid, deep] per hue — high contrast for distinct rays
+const ORB_THEMES: [string, string, string, string][] = [
+  ["#ccf7fe", "#67e0f5", "#0ea5c9", "#083060"],  // cyan-blue (like reference)
+  ["#bbf7d0", "#4ade80", "#16a34a", "#052e16"],  // emerald
+  ["#ede9fe", "#c4b5fd", "#7c3aed", "#1e0a50"],  // violet
+  ["#bae6fd", "#7dd3fc", "#0284c7", "#082050"],  // sky
+  ["#fce7f3", "#f9a8d4", "#db2777", "#500030"],  // rose
+  ["#fef9c3", "#fde047", "#ca8a04", "#451a03"],  // amber
+  ["#d1fae5", "#6ee7b7", "#059669", "#022c22"],  // teal
+  ["#e0e7ff", "#a5b4fc", "#4f46e5", "#1e1b4b"],  // indigo
+];
+
+function orbTheme(seed: string): [string, string, string, string] {
+  let h = 5381;
+  for (let i = 0; i < seed.length; i++) h = ((h << 5) + h + seed.charCodeAt(i)) | 0;
+  return ORB_THEMES[(h >>> 0) % ORB_THEMES.length];
+}
+
+function OrbAvatar({ seed, size = 72 }: { seed: string; size?: number }) {
+  const [vl, l, m, d] = useMemo(() => orbTheme(seed), [seed]);
+
+  const blurA = Math.round(size * 0.08);
+  const blurB = Math.round(size * 0.06);
+
+  return (
+    <div style={{ width: size, height: size, borderRadius: "50%", overflow: "hidden", position: "relative", flexShrink: 0 }}>
+      {/* Base fill */}
+      <div style={{ position: "absolute", inset: 0, background: l }} />
+
+      {/* Layer A: slow CW — wide light wedges */}
+      <div
+        className="orb-spin-a"
+        style={{
+          position: "absolute",
+          width: "260%", height: "260%",
+          top: "-80%", left: "-80%",
+          background: `conic-gradient(from 0deg,
+            ${vl}, ${l}, ${vl}, ${m}, ${l},
+            ${vl}, ${l}, ${vl}, ${m}, ${l},
+            ${vl}, ${l}, ${vl}, ${m}, ${l}, ${vl})`,
+          filter: `blur(${blurA}px)`,
+        }}
+      />
+
+      {/* Layer B: faster CCW — narrow deep wedges, creates interference */}
+      <div
+        className="orb-spin-b"
+        style={{
+          position: "absolute",
+          width: "240%", height: "240%",
+          top: "-70%", left: "-70%",
+          background: `conic-gradient(from 0deg,
+            ${d}, ${d}, ${m}, ${l}, ${m},
+            ${d}, ${d}, ${m}, ${l}, ${m}, ${d})`,
+          filter: `blur(${blurB}px)`,
+          opacity: 0.72,
+        }}
+      />
+
+      {/* Edge darkening for sphere depth */}
+      <div style={{
+        position: "absolute", inset: 0,
+        background: `radial-gradient(circle at 50% 50%, transparent 30%, ${d}55 68%, ${d}aa 100%)`,
+      }} />
+
+      {/* Glass highlight */}
+      <div style={{
+        position: "absolute", inset: 0,
+        background: `radial-gradient(circle at 34% 28%, rgba(255,255,255,0.65) 0%, rgba(255,255,255,0.05) 42%, transparent 58%)`,
+      }} />
+    </div>
+  );
+}
+
+function derive(entry: RosterEntry): { message: string; tone: Tone } {
+  if (entry.status === "paused") return { message: "On break.", tone: "idle" };
+  const ls = entry.last_session;
+  if (!ls) return { message: "Pinned and waiting for the first shift.", tone: "idle" };
+  const rs = ls.roster_status;
+  if (rs?.summary) return { message: snippet(rs.summary) ?? rs.summary, tone: rs.tone };
   const said = snippet(ls.latest_message);
   const thought = snippet(ls.latest_thinking);
   if (ls.status === "running" || ls.status === "rescheduling") {
-    // Prefer the live thinking summary while in flight — there usually isn't
-    // a final agent.message yet. Fall back to the last spoken text, then
-    // title.
-    return {
-      message: thought ?? said ?? (ls.title ? `Working on ${ls.title}…` : "Working on it…"),
-      color: "running",
-    };
+    return { message: thought ?? said ?? "Working on it…", tone: "running" };
   }
-  if (ls.status === "idle") {
-    return { message: said ?? "Got something I need from you.", color: "warn" };
-  }
-  if (ls.status === "terminated") {
-    return { message: said ?? ls.title ?? "All wrapped up.", color: "ok" };
-  }
-  return { message: said ?? ls.title ?? ls.status, color: "idle" };
+  if (ls.status === "idle") return { message: said ?? "Got something I need from you.", tone: "warn" };
+  if (ls.status === "terminated") return { message: said ?? ls.title ?? "All wrapped up.", tone: "ok" };
+  return { message: said ?? ls.title ?? ls.status, tone: "idle" };
 }
 
-function snippet(text: string | null | undefined, max = 180): string | null {
+function stripMd(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/`(.+?)`/g, "$1")
+    .replace(/\[(.+?)\]\(.+?\)/g, "$1")
+    .replace(/^[-*]\s+/gm, "")
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/\n{2,}/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function snippet(text: string | null | undefined, max = 80): string | null {
   if (!text) return null;
   const flat = text.replace(/\s+/g, " ").trim();
   if (!flat) return null;
@@ -403,9 +496,9 @@ function relative(iso: string): string {
   const min = Math.round(abs / 60000);
   const hr = Math.round(abs / 3600000);
   const day = Math.round(abs / 86400000);
-  const sign = ms >= 0 ? "in " : "";
+  if (abs < 60_000) return ms < 0 ? "Just now" : "In <1m";
+  const sign = ms >= 0 ? "In " : "";
   const tail = ms < 0 ? " ago" : "";
-  if (abs < 60_000) return ms < 0 ? "just now" : "in <1m";
   if (min < 60) return `${sign}${min}m${tail}`;
   if (hr < 24) return `${sign}${hr}h${tail}`;
   return `${sign}${day}d${tail}`;

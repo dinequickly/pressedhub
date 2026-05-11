@@ -21,14 +21,24 @@ router.get("/", async (req) => {
   const url = new URL(req.url);
   const tag = url.searchParams.get("tag");
   const q = url.searchParams.get("q");
+  const sourceKind = url.searchParams.get("source_kind");
+  const collectionKey = url.searchParams.get("collection_key");
+  const productKey = url.searchParams.get("product_key");
+  const shotKey = url.searchParams.get("shot_key");
+  const boardId = url.searchParams.get("board_id");
 
   let query = user.db
     .from("media_assets")
-    .select("id,name,storage_path,mime,size_bytes,width,height,tags,anthropic_file_id,created_at,updated_at")
+    .select("id,name,storage_path,mime,size_bytes,width,height,tags,anthropic_file_id,source_kind,collection_key,product_key,shot_key,board_id,status,created_at,updated_at")
     .order("created_at", { ascending: false })
     .limit(500);
   if (tag) query = query.contains("tags", [tag]);
   if (q) query = query.ilike("name", `%${q}%`);
+  if (sourceKind) query = query.eq("source_kind", sourceKind);
+  if (collectionKey) query = query.eq("collection_key", collectionKey);
+  if (productKey) query = query.eq("product_key", productKey);
+  if (shotKey) query = query.eq("shot_key", shotKey);
+  if (boardId) query = query.eq("board_id", boardId);
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -78,11 +88,23 @@ router.post("/", async (req) => {
   const file = form.get("file");
   if (!(file instanceof File)) throw new BadRequest("Missing 'file' part");
   const tag = (form.get("tag") as string | null) ?? null;
+  const tagsInput = (form.get("tags") as string | null) ?? null;
   const overrideName = (form.get("name") as string | null) ?? null;
+  const sourceKind = (form.get("source_kind") as string | null) ?? "board_upload";
+  const collectionKey = (form.get("collection_key") as string | null) ?? null;
+  const productKey = (form.get("product_key") as string | null) ?? null;
+  const shotKey = (form.get("shot_key") as string | null) ?? null;
+  const boardId = (form.get("board_id") as string | null) ?? null;
+  const status = (form.get("status") as string | null) ?? "ready";
   const name = overrideName || file.name || `upload-${Date.now()}`;
+  const tags = [
+    ...(tagsInput ? tagsInput.split(",").map((v) => v.trim()).filter(Boolean) : []),
+    ...(tag ? [tag] : []),
+  ].filter((value, index, arr) => arr.indexOf(value) === index);
 
   const id = crypto.randomUUID();
-  const storagePath = `users/${user.id}/${id}/${name}`;
+  const safeName = name.replace(/\s+/g, "_").replace(/[^\w.\-]/g, "_");
+  const storagePath = `users/${user.id}/${id}/${safeName}`;
   const bytes = new Uint8Array(await file.arrayBuffer());
   const mime = file.type || "application/octet-stream";
 
@@ -102,7 +124,13 @@ router.post("/", async (req) => {
       storage_path: storagePath,
       mime,
       size_bytes: bytes.length,
-      tags: tag ? [tag] : [],
+      tags,
+      source_kind: sourceKind,
+      collection_key: collectionKey,
+      product_key: productKey,
+      shot_key: shotKey,
+      board_id: boardId,
+      status,
     })
     .select("*")
     .single();

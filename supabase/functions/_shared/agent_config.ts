@@ -1,4 +1,4 @@
-import { AnthropicAgents } from "./anthropic.ts";
+import { AnthropicAgents, DEFAULT_THINKING_CONFIG } from "./anthropic.ts";
 import { KB_TOOL_DEFS, KB_TOOL_NAMES } from "./kb_tools.ts";
 import { ROSTER_STATUS_TOOL_DEFS, ROSTER_STATUS_TOOL_NAMES } from "./roster_status_tools.ts";
 import type { SupabaseClient } from "./supabase.ts";
@@ -59,6 +59,7 @@ export async function syncAgentBuiltins(
     name: agent.name as string,
     model: agent.model as string,
     system: agent.system_prompt as string,
+    thinking: DEFAULT_THINKING_CONFIG,
     tools: withBuiltinTools(
       baseTools.length ? baseTools : [{ type: "agent_toolset_20260401" }],
     ),

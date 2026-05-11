@@ -17,6 +17,7 @@
     "fflate": "^0.8.2",
     "mammoth": "^1.8.0",
     "marked": "^18.0.3",
+    "pdfjs-dist": "^5.7.284",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-icons": "^5.4.0",

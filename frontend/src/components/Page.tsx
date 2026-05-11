@@ -11,8 +11,8 @@ export function Page({
   children: ReactNode;
 }) {
   return (
-    <div className="h-full flex flex-col bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.95),_rgba(245,245,244,0.92)_42%,_rgba(238,238,236,0.88))]">
-      <div className="px-6 pt-6 pb-5 border-b border-neutral-200/80 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/70 flex items-start justify-between gap-4 shadow-[0_1px_0_rgba(255,255,255,0.7)]">
+    <div className="h-full flex flex-col bg-white">
+      <div className="px-6 pt-6 pb-5 border-b border-neutral-100 bg-white flex items-start justify-between gap-4">
         <div className="min-w-0">
           {typeof title === "string"
             ? <h1 className="text-[1.45rem] font-semibold tracking-tight text-ink-950">{title}</h1>
@@ -31,7 +31,7 @@ export function EmptyState({
 }: { title: string; body?: string; action?: ReactNode }) {
   return (
     <div className="p-10 text-center">
-      <div className="mx-auto size-10 rounded-xl bg-black text-white grid place-items-center shadow-soft mb-3">
+      <div className="mx-auto size-10 rounded-xl bg-neutral-100 text-neutral-500 grid place-items-center mb-3">
         ○
       </div>
       <div className="font-medium text-ink-900">{title}</div>

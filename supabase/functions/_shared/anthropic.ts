@@ -65,14 +65,20 @@ export type AgentCreateInput = {
   multiagent?: Json;
   description?: string | null;
   metadata?: Record<string, string>;
-  // Extended thinking config. On Opus 4.7 / Mythos Preview the default is
-  // `omitted`, so we have to set `display: "summarized"` explicitly to see
-  // anything. Budget is left unset on purpose — we want adaptive thinking.
+  // Extended thinking config. On newer Claude 4 variants the default can be
+  // `omitted`, which still returns an opaque signature but no readable
+  // `thinking` text. We set `display: "summarized"` when we want visible
+  // traces in the product while still preserving the same signature field.
   thinking?: {
     type: "enabled" | "disabled";
     budget_tokens?: number;
     display?: "summarized" | "omitted";
   };
+};
+
+export const DEFAULT_THINKING_CONFIG: NonNullable<AgentCreateInput["thinking"]> = {
+  type: "enabled",
+  display: "summarized",
 };
 
 export type AgentRecord = { id: string; version: number } & Record<string, unknown>;

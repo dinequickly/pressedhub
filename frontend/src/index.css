@@ -7,7 +7,7 @@
   body {
     font-feature-settings: "cv11", "ss01", "ss03";
     letter-spacing: -0.01em;
-    @apply bg-stone-100 text-ink-900 antialiased;
+    @apply bg-white text-ink-900 antialiased;
   }
 }
 
@@ -22,7 +22,7 @@
     @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium transition-all duration-200;
   }
   .btn-primary {
-    @apply btn bg-black text-white shadow-[0_10px_20px_rgba(0,0,0,0.12)] hover:bg-neutral-800;
+    @apply btn bg-neutral-900 text-white shadow-[0_2px_8px_rgba(0,0,0,0.10)] hover:bg-neutral-700;
   }
   .btn-ghost {
     @apply btn text-ink-700 hover:bg-white hover:shadow-soft;
@@ -93,3 +93,68 @@
 .markdown-body table { @apply border border-neutral-200 rounded-md text-xs my-2; }
 .markdown-body th { @apply px-2 py-1 bg-neutral-50 text-left font-semibold border-b border-neutral-200; }
 .markdown-body td { @apply px-2 py-1 border-b border-neutral-100; }
+
+@keyframes orb-spin-cw {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes orb-spin-ccw {
+  from { transform: rotate(360deg); }
+  to   { transform: rotate(0deg); }
+}
+.orb-spin-a {
+  animation: orb-spin-cw 11s linear infinite;
+  will-change: transform;
+}
+.orb-spin-b {
+  animation: orb-spin-ccw 7s linear infinite;
+  will-change: transform;
+}
+
+@keyframes citrus-bob {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.16);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.08);
+    box-shadow: 0 10px 22px -10px rgba(245, 158, 11, 0.45);
+  }
+}
+
+@keyframes citrus-spin {
+  0% {
+    transform: rotate(-10deg) scale(1);
+  }
+  50% {
+    transform: rotate(10deg) scale(1.08);
+  }
+  100% {
+    transform: rotate(-10deg) scale(1);
+  }
+}
+
+@keyframes juice-glow {
+  0%, 100% {
+    transform: translateX(0);
+    opacity: 0.88;
+  }
+  50% {
+    transform: translateX(1px);
+    opacity: 1;
+  }
+}
+
+.activity-citrus-badge {
+  @apply inline-grid place-items-center;
+  animation: citrus-bob 1.3s ease-in-out infinite;
+}
+
+.activity-citrus-icon {
+  animation: citrus-spin 1.6s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.activity-juice-text {
+  animation: juice-glow 1.4s ease-in-out infinite;
+}

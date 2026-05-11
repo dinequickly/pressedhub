@@ -14,7 +14,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  LuMessageCircle, LuSend, LuSparkles, LuTriangleAlert, LuPlay, LuRotateCw,
+  LuSend, LuSparkles, LuTriangleAlert, LuPlay, LuRotateCw,
 } from "react-icons/lu";
 import { api, type Agent, type Session, type SessionEvent, type VibeBoard } from "../../../lib/api";
 import { useApi, refresh } from "../../../lib/swr";
@@ -148,14 +148,12 @@ function ChatShell({
   children, headerActions,
 }: { children: React.ReactNode; headerActions?: React.ReactNode }) {
   return (
-    <aside className="border-l border-zinc-800 flex flex-col bg-zinc-950 min-h-0">
-      <div className="px-4 py-3 border-b border-zinc-800 flex items-center gap-2">
+    <aside className="border-l border-gray-200 flex flex-col bg-zinc-50 min-h-0">
+      <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-2">
+        <SpinningDisc />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold flex items-center gap-1.5 text-zinc-100">
-            <LuMessageCircle className="size-4 text-fuchsia-400" />
-            Director
-          </div>
-          <div className="text-[11px] text-zinc-500">Image gen agent</div>
+          <div className="text-sm font-semibold text-gray-900">Director</div>
+          <div className="text-[11px] text-gray-400">Image gen agent</div>
         </div>
         {headerActions}
       </div>
@@ -319,7 +317,7 @@ function ChatBound({
       type="button"
       onClick={onRefresh}
       disabled={refreshing}
-      className="size-7 grid place-items-center rounded-md text-zinc-500 hover:text-zinc-100 hover:bg-zinc-900 transition-colors disabled:opacity-50"
+      className="size-7 grid place-items-center rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:opacity-50"
       title="Start a new Director conversation"
     >
       <LuRotateCw className={["size-3.5", refreshing ? "animate-spin" : ""].join(" ")} />
@@ -333,9 +331,9 @@ function ChatBound({
           <LuTriangleAlert className="size-3 mt-0.5 shrink-0" /> {refreshError}
         </div>
       )}
-      <div ref={eventsRef} className="flex-1 overflow-y-auto p-3 space-y-2">
+      <div ref={eventsRef} className="flex-1 overflow-y-auto p-3 space-y-2 bg-zinc-50">
         {events.length === 0 ? (
-          <div className="text-xs text-zinc-500 italic px-2">
+          <div className="text-xs text-gray-400 italic px-2">
             Say something — try "look at my board and propose 3 hero image directions, then generate one with Gemini."
           </div>
         ) : events.map((e) => <ChatRow key={e.id} event={e} />)}
@@ -356,9 +354,9 @@ function ChatBound({
           </div>
         )}
       </div>
-      <div className="border-t border-zinc-800 bg-zinc-950 p-2 flex gap-1.5">
+      <div className="border-t border-gray-200 bg-zinc-50 p-2 flex gap-1.5">
         <input
-          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-fuchsia-400/50"
+          className="flex-1 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-fuchsia-400/50"
           placeholder="Ask the Director…"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
@@ -391,8 +389,8 @@ function ChatRow({ event }: { event: SessionEvent }) {
       <div className={[
         "rounded-lg px-3 py-2 text-sm whitespace-pre-wrap",
         t === "user.message"
-          ? "bg-fuchsia-500/15 text-zinc-100 ml-6 border border-fuchsia-400/20"
-          : "bg-zinc-900 border border-zinc-800 text-zinc-100 mr-6",
+          ? "bg-fuchsia-50 text-gray-900 ml-6 border border-fuchsia-200/60"
+          : "bg-gray-50 border border-gray-200 text-gray-900 mr-6",
       ].join(" ")}>
         {text}
       </div>
@@ -402,7 +400,7 @@ function ChatRow({ event }: { event: SessionEvent }) {
     const tool = pickToolName(p);
     if (!tool) return null;
     return (
-      <div className="text-[11px] font-mono text-zinc-500 px-3">
+      <div className="text-[11px] font-mono text-gray-400 px-3">
         → {tool}…
       </div>
     );
@@ -410,7 +408,7 @@ function ChatRow({ event }: { event: SessionEvent }) {
   if (t.startsWith("session.error")) {
     const text = (p.message as string) ?? "";
     return (
-      <div className="text-[11px] text-rose-400 px-3 flex items-start gap-1">
+      <div className="text-[11px] text-rose-500 px-3 flex items-start gap-1">
         <LuTriangleAlert className="size-3 mt-0.5" /> {text || "Error"}
       </div>
     );
@@ -464,9 +462,21 @@ function pickLastToolName(events: SessionEvent[]): string | null {
 function ThinkingDots() {
   return (
     <span className="inline-flex gap-0.5">
-      <span className="size-1 bg-fuchsia-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-      <span className="size-1 bg-fuchsia-400 rounded-full animate-bounce" style={{ animationDelay: "120ms" }} />
-      <span className="size-1 bg-fuchsia-400 rounded-full animate-bounce" style={{ animationDelay: "240ms" }} />
+      <span className="size-1 bg-fuchsia-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+      <span className="size-1 bg-fuchsia-500 rounded-full animate-bounce" style={{ animationDelay: "120ms" }} />
+      <span className="size-1 bg-fuchsia-500 rounded-full animate-bounce" style={{ animationDelay: "240ms" }} />
     </span>
+  );
+}
+
+function SpinningDisc() {
+  return (
+    <div className="relative size-8 shrink-0 animate-spin" style={{ animationDuration: "4s" }}>
+      <div
+        className="absolute inset-0 rounded-full"
+        style={{ background: "conic-gradient(from 0deg, #d946ef 0%, #a855f7 30%, #f5d0fe 60%, #d946ef 100%)" }}
+      />
+      <div className="absolute inset-[4px] rounded-full bg-zinc-50" />
+    </div>
   );
 }

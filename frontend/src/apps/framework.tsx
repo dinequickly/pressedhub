@@ -37,7 +37,7 @@ export function AppHost() {
   const { Routes } = manifest;
   return (
     <AppContext.Provider value={manifest}>
-      <div className="h-full bg-zinc-950 text-zinc-100 flex flex-col">
+      <div className="h-full bg-zinc-50 text-gray-900 flex flex-col">
         <Routes />
         <BackToHubPill />
       </div>
@@ -51,7 +51,7 @@ function BackToHubPill() {
   return (
     <Link
       to="/apps"
-      className="fixed top-3 left-3 z-50 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-900/80 backdrop-blur border border-zinc-800 text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 text-xs font-medium transition-colors"
+      className="fixed top-3 left-3 z-50 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-white/90 backdrop-blur border border-gray-200 text-gray-500 hover:text-gray-900 hover:border-gray-300 text-xs font-medium transition-colors shadow-sm"
     >
       <LuArrowLeft className="size-3.5" />
       Hub
