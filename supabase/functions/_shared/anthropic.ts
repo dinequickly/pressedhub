@@ -72,13 +72,11 @@ export type AgentCreateInput = {
   thinking?: {
     type: "enabled" | "disabled";
     budget_tokens?: number;
-    display?: "summarized" | "omitted";
   };
 };
 
 export const DEFAULT_THINKING_CONFIG: NonNullable<AgentCreateInput["thinking"]> = {
   type: "enabled",
-  display: "summarized",
 };
 
 export type AgentRecord = { id: string; version: number } & Record<string, unknown>;
@@ -111,7 +109,14 @@ export const AnthropicEnvironments = {
 
 export type SessionResource =
   | { type: "file"; file_id: string; mount_path?: string }
-  | { type: "memory_store"; memory_store_id: string; access?: "read_only" | "read_write" };
+  | {
+    type: "memory_store";
+    memory_store_id: string;
+    access?: "read_only" | "read_write";
+    // Session-specific guidance injected alongside the store's name/description.
+    // Capped at 4,096 chars by the API. Use to tell the agent WHEN/HOW to use this store.
+    instructions?: string;
+  };
 
 export type SessionCreateInput = {
   agent: string | { type: "agent"; id: string; version?: number };
@@ -471,6 +476,48 @@ export const AnthropicMemoryStores = {
   archive: (id: string) =>
     request<AnthropicMemoryStoreRecord>("POST", `/v1/memory_stores/${id}/archive`),
   delete: (id: string) => request<null>("DELETE", `/v1/memory_stores/${id}`),
+};
+
+// -- Memories (documents within a memory store) --------------------------
+// Individual documents are addressed by path. Max 100 kB each.
+
+export type AnthropicMemoryRecord = {
+  id: string;
+  path: string;
+  content?: string;
+  size_bytes?: number;
+  created_at?: string;
+  updated_at?: string;
+} & Record<string, unknown>;
+
+export const AnthropicMemories = {
+  // Create does NOT overwrite — use update to modify an existing memory.
+  create: (storeId: string, input: { path: string; content: string }) =>
+    request<AnthropicMemoryRecord>("POST", `/v1/memory_stores/${storeId}/memories`, input),
+  list: (storeId: string, params?: { path_prefix?: string; limit?: number; page?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.path_prefix) qs.set("path_prefix", params.path_prefix);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.page) qs.set("page", params.page);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request<{ data: AnthropicMemoryRecord[]; has_more?: boolean; next_page?: string | null }>(
+      "GET", `/v1/memory_stores/${storeId}/memories${suffix}`,
+    );
+  },
+  retrieve: (storeId: string, memId: string) =>
+    request<AnthropicMemoryRecord>("GET", `/v1/memory_stores/${storeId}/memories/${memId}`),
+  // Pass `precondition.content_sha256` to guard against concurrent writes.
+  update: (
+    storeId: string,
+    memId: string,
+    input: {
+      path?: string;
+      content?: string;
+      precondition?: { type: "content_sha256"; content_sha256: string };
+    },
+  ) => request<AnthropicMemoryRecord>("POST", `/v1/memory_stores/${storeId}/memories/${memId}`, input),
+  delete: (storeId: string, memId: string) =>
+    request<null>("DELETE", `/v1/memory_stores/${storeId}/memories/${memId}`),
 };
 
 // -- Vaults --------------------------------------------------------------

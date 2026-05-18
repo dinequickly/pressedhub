@@ -151,6 +151,9 @@ export const AgentCreateSchema = z.object({
   mcp_servers: z.array(z.unknown()).default([]),
   outcome: OutcomeSchema.nullable().optional(),
   brain: z.array(z.unknown()).default([]),
+  // When true, a private Anthropic memory store is auto-created and pinned to
+  // this agent so every session gets persistent memory mounted at /mnt/memory/.
+  auto_memory: z.boolean().default(false),
   default_resources: z.object({
     kb_file_ids: z.array(z.string().uuid()).default([]),
     memory_store_ids: z.array(z.string().uuid()).default([]),
@@ -273,7 +276,7 @@ export const McpServerUpdateSchema = McpServerCreateSchema.partial();
 export const MemoryStoreCreateSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(""),
-  scope: z.enum(["workflow", "user", "shared"]),
+  scope: z.enum(["workflow", "user", "shared", "agent"]),
   workflow_id: z.string().uuid().optional(),
 });
 

@@ -65,7 +65,7 @@ export function AgentDetailPage() {
         </button>
       }
     >
-      <div className="h-full grid grid-cols-1 xl:grid-cols-[1fr_440px]">
+      <div className="h-full grid grid-cols-1 xl:grid-cols-2">
         <ChatPanel agent={agent} />
         <ConfigPanel agent={agent} onSaved={() => mutateAgent()} />
       </div>
@@ -371,6 +371,9 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
   const [role, setRole] = useState(agent.role);
   const [emoji, setEmoji] = useState(agent.emoji);
   const [systemPrompt, setSystemPrompt] = useState(agent.system_prompt);
+  const [goalEnabled, setGoalEnabled] = useState(
+    !!(agent.outcome?.description || agent.outcome?.rubric_md),
+  );
   const [goalDesc, setGoalDesc] = useState(agent.outcome?.description ?? "");
   const [rubricMd, setRubricMd] = useState(agent.outcome?.rubric_md ?? "");
   const [maxIters, setMaxIters] = useState(agent.outcome?.max_iterations ?? 5);
@@ -392,11 +395,13 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  const agentHasGoal = !!(agent.outcome?.description || agent.outcome?.rubric_md);
   const dirty =
     name !== agent.name ||
     role !== agent.role ||
     emoji !== agent.emoji ||
     systemPrompt !== agent.system_prompt ||
+    goalEnabled !== agentHasGoal ||
     goalDesc !== (agent.outcome?.description ?? "") ||
     rubricMd !== (agent.outcome?.rubric_md ?? "") ||
     maxIters !== (agent.outcome?.max_iterations ?? 5) ||
@@ -416,7 +421,7 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
           skill_id: s.anthropic_skill_id as string,
           ...(s.type === "custom" ? { version: "latest" } : {}),
         }));
-      const outcome = goalDesc || rubricMd
+      const outcome = goalEnabled && (goalDesc || rubricMd)
         ? { description: goalDesc, rubric_md: rubricMd, max_iterations: maxIters }
         : null;
       await api.patch<Agent>(`/agents/${agent.id}`, {
@@ -463,52 +468,64 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
         </Section>
 
         <Section icon={<LuTarget className="size-4" />} title="Goal">
-          <div className="text-[11px] text-ink-500 mb-2">
-            The grader iterates until the rubric is satisfied.
-          </div>
-          <label className="label block mb-1">Description</label>
-          <textarea
-            className="input"
-            rows={2}
-            placeholder="1-page PDF brief covering funding, team, product, and news."
-            value={goalDesc}
-            onChange={(e) => setGoalDesc(e.target.value)}
-          />
-          <div className="flex items-center justify-between mt-3 mb-1">
-            <label className="label">Rubric (markdown)</label>
-            <button
-              className="btn-ghost text-[11px]"
-              onClick={() => setPreviewRubric((v) => !v)}
-            >
-              {previewRubric
-                ? <><LuPencil className="size-3" /> Edit</>
-                : <><LuEye className="size-3" /> Rubric preview</>}
-            </button>
-          </div>
-          {previewRubric ? (
-            <div className="card p-3 text-sm">
-              <Markdown src={rubricMd || "*(empty)*"} />
-            </div>
-          ) : (
-            <textarea
-              className="input font-mono text-xs"
-              rows={8}
-              placeholder={`# Research brief\n## Coverage\n- Funding round + amount + date\n- Approximate headcount\n- Top 3 products\n- 3 recent news items (last 90 days)\n## Format\n- Single PDF, 1 page`}
-              value={rubricMd}
-              onChange={(e) => setRubricMd(e.target.value)}
-            />
-          )}
-          <div className="mt-3">
-            <label className="label block mb-1">Max iterations</label>
+          <label className="flex items-center gap-2 cursor-pointer mb-3">
             <input
-              type="number"
-              min={1}
-              max={20}
-              className="input w-24"
-              value={maxIters}
-              onChange={(e) => setMaxIters(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+              type="checkbox"
+              checked={goalEnabled}
+              onChange={(e) => setGoalEnabled(e.target.checked)}
             />
-          </div>
+            <span className="text-sm">Enable goal &amp; rubric grader</span>
+          </label>
+          {goalEnabled && (
+            <>
+              <div className="text-[11px] text-ink-500 mb-2">
+                The grader iterates until the rubric is satisfied.
+              </div>
+              <label className="label block mb-1">Description</label>
+              <textarea
+                className="input"
+                rows={2}
+                placeholder="1-page PDF brief covering funding, team, product, and news."
+                value={goalDesc}
+                onChange={(e) => setGoalDesc(e.target.value)}
+              />
+              <div className="flex items-center justify-between mt-3 mb-1">
+                <label className="label">Rubric (markdown)</label>
+                <button
+                  className="btn-ghost text-[11px]"
+                  onClick={() => setPreviewRubric((v) => !v)}
+                >
+                  {previewRubric
+                    ? <><LuPencil className="size-3" /> Edit</>
+                    : <><LuEye className="size-3" /> Rubric preview</>}
+                </button>
+              </div>
+              {previewRubric ? (
+                <div className="card p-3 text-sm">
+                  <Markdown src={rubricMd || "*(empty)*"} />
+                </div>
+              ) : (
+                <textarea
+                  className="input font-mono text-xs"
+                  rows={8}
+                  placeholder={`# Research brief\n## Coverage\n- Funding round + amount + date\n- Approximate headcount\n- Top 3 products\n- 3 recent news items (last 90 days)\n## Format\n- Single PDF, 1 page`}
+                  value={rubricMd}
+                  onChange={(e) => setRubricMd(e.target.value)}
+                />
+              )}
+              <div className="mt-3">
+                <label className="label block mb-1">Max iterations</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  className="input w-24"
+                  value={maxIters}
+                  onChange={(e) => setMaxIters(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                />
+              </div>
+            </>
+          )}
         </Section>
 
         <Section icon={<LuBot className="size-4" />} title="Instructions">
@@ -555,53 +572,12 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
           )}
         </Section>
 
-        <Section icon={<LuFileText className="size-4" />} title="Pinned KB files">
-          <div className="text-[11px] text-ink-500 mb-2">
-            Filenames (or substrings) automatically attached on every session start.
-            Useful for templates or reference docs the agent always needs.
-          </div>
-          <div className="space-y-1 mb-2">
-            {pinnedKbNames.length === 0 ? (
-              <div className="text-xs text-ink-400 italic">No pinned files.</div>
-            ) : pinnedKbNames.map((name, i) => (
-              <div key={i} className="flex items-center gap-2 px-2 py-1 rounded-lg border border-neutral-200 bg-white">
-                <div className="flex-1 text-xs font-mono truncate">{name}</div>
-                <button
-                  className="text-ink-400 hover:text-rose-500 transition-colors"
-                  onClick={() => setPinnedKbNames((prev) => prev.filter((_, j) => j !== i))}
-                >
-                  <LuX className="size-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input
-              className="input flex-1 text-sm font-mono"
-              placeholder="FY26 Template (name or substring)"
-              value={pinnedInput}
-              onChange={(e) => setPinnedInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && pinnedInput.trim()) {
-                  setPinnedKbNames((prev) => [...prev, pinnedInput.trim()]);
-                  setPinnedInput("");
-                }
-              }}
-            />
-            <button
-              className="btn-ghost"
-              disabled={!pinnedInput.trim()}
-              onClick={() => {
-                if (pinnedInput.trim()) {
-                  setPinnedKbNames((prev) => [...prev, pinnedInput.trim()]);
-                  setPinnedInput("");
-                }
-              }}
-            >
-              <LuPlus className="size-4" /> Add
-            </button>
-          </div>
-        </Section>
+        <PinnedKbSection
+          pinnedKbNames={pinnedKbNames}
+          setPinnedKbNames={setPinnedKbNames}
+          pinnedInput={pinnedInput}
+          setPinnedInput={setPinnedInput}
+        />
 
         <SchedulesSection agentId={agent.id} />
 
@@ -625,6 +601,100 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
         </div>
       </div>
     </div>
+  );
+}
+
+function PinnedKbSection({
+  pinnedKbNames, setPinnedKbNames, pinnedInput, setPinnedInput,
+}: {
+  pinnedKbNames: string[];
+  setPinnedKbNames: React.Dispatch<React.SetStateAction<string[]>>;
+  pinnedInput: string;
+  setPinnedInput: React.Dispatch<React.SetStateAction<string>>;
+}) {
+  const { data: kbFiles } = useApi<{ data: KbFile[] }>("/kb/files");
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const files = kbFiles?.data ?? [];
+  const unpinned = files.filter((f) => !pinnedKbNames.includes(f.name));
+
+  function addName(name: string) {
+    if (name.trim() && !pinnedKbNames.includes(name.trim())) {
+      setPinnedKbNames((prev) => [...prev, name.trim()]);
+    }
+  }
+
+  return (
+    <Section icon={<LuFileText className="size-4" />} title="Pinned KB files">
+      <div className="text-[11px] text-ink-500 mb-2">
+        Files automatically attached on every session start.
+      </div>
+      <div className="space-y-1 mb-2">
+        {pinnedKbNames.length === 0 ? (
+          <div className="text-xs text-ink-400 italic">No pinned files.</div>
+        ) : pinnedKbNames.map((name, i) => (
+          <div key={i} className="flex items-center gap-2 px-2 py-1 rounded-lg border border-neutral-200 bg-white">
+            <div className="flex-1 text-xs font-mono truncate">{name}</div>
+            <button
+              className="text-ink-400 hover:text-rose-500 transition-colors"
+              onClick={() => setPinnedKbNames((prev) => prev.filter((_, j) => j !== i))}
+            >
+              <LuX className="size-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="relative flex gap-2">
+        {files.length > 0 && (
+          <div className="relative">
+            <button
+              className="btn-ghost"
+              onClick={() => setDropdownOpen((v) => !v)}
+            >
+              <LuPlus className="size-4" /> Pick file
+            </button>
+            {dropdownOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setDropdownOpen(false)} />
+                <div className="absolute left-0 mt-1 w-64 bg-white rounded-xl shadow-card border border-neutral-200 z-20 max-h-52 overflow-y-auto">
+                  {unpinned.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-ink-500">All files already pinned.</div>
+                  ) : unpinned.map((f) => (
+                    <button
+                      key={f.id}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-50 truncate"
+                      onClick={() => { addName(f.name); setDropdownOpen(false); }}
+                    >
+                      {f.name}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+        <input
+          className="input flex-1 text-sm font-mono"
+          placeholder="or type a name / substring"
+          value={pinnedInput}
+          onChange={(e) => setPinnedInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && pinnedInput.trim()) {
+              addName(pinnedInput);
+              setPinnedInput("");
+            }
+          }}
+        />
+        <button
+          className="btn-ghost"
+          disabled={!pinnedInput.trim()}
+          onClick={() => {
+            if (pinnedInput.trim()) { addName(pinnedInput); setPinnedInput(""); }
+          }}
+        >
+          Add
+        </button>
+      </div>
+    </Section>
   );
 }
 

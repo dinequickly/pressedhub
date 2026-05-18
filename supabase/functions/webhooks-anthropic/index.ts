@@ -57,6 +57,17 @@ Deno.serve(wrap(async (req) => {
         .single();
 
       if (localRow) {
+        // Close any schedule_run linked to this session when it finishes.
+        if (["idle", "terminated"].includes(remote.status)) {
+          await sc
+            .from("schedule_runs")
+            .update({
+              status: remote.status === "terminated" ? "failed" : "success",
+              finished_at: new Date().toISOString(),
+            })
+            .eq("session_id", localRow.id as string)
+            .in("status", ["running", "pending"]);
+        }
         try {
           const ctx = await ctxFromSession(sc, localRow.id as string);
           if (ctx) await relayOnce(sc, ctx);

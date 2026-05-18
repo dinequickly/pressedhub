@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { LuShield, LuUser, LuPlug, LuCheck, LuTrash } from "react-icons/lu";
-import { api, type Agent, type Profile, type VaultConnection } from "../lib/api";
+import { api, type Agent, type Profile, type VaultConnection, type WorkspaceSettings } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi, refresh } from "../lib/swr";
 import { Page } from "../components/Page";
@@ -88,6 +88,8 @@ export function ProfilePage() {
           {bootstrapMsg && <div className="mt-2 text-xs text-ink-500">{bootstrapMsg}</div>}
         </section>
 
+        {profile.role === "admin" && <WorkspaceNavSettings />}
+
         {profile.role === "admin" && members && (
           <section className="card p-4">
             <div className="font-medium mb-3">Members</div>
@@ -126,6 +128,75 @@ export function ProfilePage() {
         )}
       </div>
     </Page>
+  );
+}
+
+// -- Workspace nav visibility (admin only) --------------------------------
+
+const TOGGLEABLE_PAGES = [
+  { key: "environments", label: "Environments" },
+  { key: "runs", label: "Runs" },
+  { key: "dreams", label: "Dreams" },
+] as const;
+
+function WorkspaceNavSettings() {
+  const { data: wsSettings, mutate } = useApi<WorkspaceSettings>("/profiles/workspace-settings");
+  const [saving, setSaving] = useState(false);
+  const hidden = wsSettings?.hidden_nav_pages ?? [];
+
+  async function toggle(key: string) {
+    const next = hidden.includes(key)
+      ? hidden.filter((p) => p !== key)
+      : [...hidden, key];
+    setSaving(true);
+    try {
+      await api.patch("/profiles/workspace-settings", { hidden_nav_pages: next });
+      await mutate();
+      refresh("/profiles/workspace-settings");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="card p-4">
+      <div className="font-medium mb-1">Sidebar pages</div>
+      <div className="text-xs text-ink-500 mb-3">
+        Choose which pages appear in the sidebar for all users.
+      </div>
+      <div className="space-y-2">
+        {TOGGLEABLE_PAGES.map(({ key, label }) => {
+          const visible = !hidden.includes(key);
+          return (
+            <label
+              key={key}
+              className="flex items-center justify-between gap-3 px-2 py-1.5 rounded-lg hover:bg-neutral-50 cursor-pointer"
+            >
+              <span className="text-sm">{label}</span>
+              <button
+                role="switch"
+                aria-checked={visible}
+                disabled={saving}
+                onClick={() => toggle(key)}
+                className={[
+                  "relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500",
+                  visible ? "bg-violet-600" : "bg-neutral-200",
+                  saving ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "pointer-events-none inline-block size-4 rounded-full bg-white shadow transition-transform",
+                    visible ? "translate-x-4" : "translate-x-0",
+                  ].join(" ")}
+                />
+              </button>
+            </label>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

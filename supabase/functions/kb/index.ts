@@ -164,7 +164,8 @@ router.post("/files/upload-url", async (req) => {
   const user = await requireUser(req);
   const parsed = KbUploadUrlSchema.parse(await readJson(req));
   const id = crypto.randomUUID();
-  const storagePath = `users/${user.id}/${id}/${parsed.name}`;
+  const safeName = parsed.name.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9._\-]/g, "_");
+  const storagePath = `users/${user.id}/${id}/${safeName}`;
 
   const { data: file, error: insertErr } = await user.db
     .from("kb_files")

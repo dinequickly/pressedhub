@@ -3,7 +3,7 @@
 // Each event type the Managed Agents harness can emit gets its own icon,
 // tint, and short summary line.
 
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import type { IconType } from "react-icons";
 import {
   LuMessageSquare, LuActivity, LuTerminal, LuBot,
@@ -14,24 +14,54 @@ import {
   LuZap, LuShare2, LuCitrus, LuCopy, LuRotateCcw, LuCheck, LuCpu,
   LuChevronDown, LuChevronRight, LuFile, LuPresentation,
 } from "react-icons/lu";
-import type { SessionEvent } from "../lib/api";
+import type { ChartSpec, SessionEvent } from "../lib/api";
 import { relativeTime, renderMarkdown } from "../lib/format";
+import { PressedSpinner } from "./PressedSpinner";
+
+const LazyChartView = lazy(() =>
+  import("./ChartView").then((m) => ({ default: m.ChartView }))
+);
+
+type Seg = { kind: "md"; text: string } | { kind: "chart"; json: string };
+
+function splitChartBlocks(text: string): Seg[] {
+  const out: Seg[] = [];
+  const re = /```chart\s*\n([\s\S]*?)```/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push({ kind: "md", text: text.slice(last, m.index) });
+    out.push({ kind: "chart", json: m[1].trim() });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ kind: "md", text: text.slice(last) });
+  return out.filter((s) => s.kind === "chart" || (s as { kind: "md"; text: string }).text.trim() !== "");
+}
+
+function tryParseChartSpec(json: string): ChartSpec | null {
+  try {
+    const s = JSON.parse(json) as Record<string, unknown>;
+    if (!["bar", "line", "area", "pie", "donut"].includes(s.type as string)) return null;
+    if (!Array.isArray(s.data) || !Array.isArray(s.series)) return null;
+    return s as unknown as ChartSpec;
+  } catch { return null; }
+}
 
 type Tint =
   | "amber" | "violet" | "indigo" | "sky" | "emerald" | "rose"
   | "neutral" | "fuchsia" | "teal" | "blue";
 
 const TINT: Record<Tint, { bg: string; icon: string; label: string }> = {
-  amber:    { bg: "bg-amber-50",    icon: "text-amber-500",    label: "text-amber-700" },
-  violet:   { bg: "bg-violet-50",   icon: "text-violet-500",   label: "text-violet-700" },
-  indigo:   { bg: "bg-indigo-50",   icon: "text-indigo-500",   label: "text-indigo-700" },
-  sky:      { bg: "bg-sky-50",      icon: "text-sky-500",      label: "text-sky-700" },
-  emerald:  { bg: "bg-emerald-50",  icon: "text-emerald-500",  label: "text-emerald-700" },
-  rose:     { bg: "bg-rose-50",     icon: "text-rose-500",     label: "text-rose-700" },
-  fuchsia:  { bg: "bg-fuchsia-50",  icon: "text-fuchsia-500",  label: "text-fuchsia-700" },
-  teal:     { bg: "bg-teal-50",     icon: "text-teal-500",     label: "text-teal-700" },
-  blue:     { bg: "bg-blue-50",     icon: "text-blue-500",     label: "text-blue-700" },
-  neutral:  { bg: "bg-neutral-100", icon: "text-neutral-500",  label: "text-neutral-700" },
+  amber:    { bg: "bg-neutral-900", icon: "text-white", label: "text-neutral-900" },
+  violet:   { bg: "bg-neutral-900", icon: "text-white", label: "text-neutral-900" },
+  indigo:   { bg: "bg-neutral-900", icon: "text-white", label: "text-neutral-900" },
+  sky:      { bg: "bg-neutral-900", icon: "text-white", label: "text-neutral-900" },
+  emerald:  { bg: "bg-neutral-900", icon: "text-white", label: "text-neutral-900" },
+  rose:     { bg: "bg-neutral-900", icon: "text-white", label: "text-neutral-900" },
+  fuchsia:  { bg: "bg-neutral-900", icon: "text-white", label: "text-neutral-900" },
+  teal:     { bg: "bg-neutral-900", icon: "text-white", label: "text-neutral-900" },
+  blue:     { bg: "bg-neutral-900", icon: "text-white", label: "text-neutral-900" },
+  neutral:  { bg: "bg-neutral-900", icon: "text-white", label: "text-neutral-900" },
 };
 
 type ToolMeta = {
@@ -535,9 +565,7 @@ export function JuiceLoader({ className = "" }: { className?: string }) {
   const juice = useJuicePhrase(true);
   return (
     <div className={`flex items-center gap-2 text-sm text-ink-500 italic ${className}`}>
-      <span className="activity-citrus-badge size-6 rounded-full bg-amber-50/90">
-        <LuCitrus className="activity-citrus-icon size-3.5 text-amber-500" />
-      </span>
+      <PressedSpinner size={18} />
       <span>{juice}…</span>
     </div>
   );
@@ -559,9 +587,11 @@ export function LiveActivity({ events }: { events: SessionEvent[] }) {
   return (
     <div className="flex items-start gap-2.5">
       <div
-        className={`size-7 rounded-lg ${cls.bg} ${cls.icon} grid place-items-center shrink-0 mt-0.5 ${isJuiceFallback ? "activity-citrus-badge" : "animate-pulse"}`}
+        className={`size-7 rounded-lg ${cls.bg} ${cls.icon} grid place-items-center shrink-0 mt-0.5 ${isJuiceFallback ? "" : "animate-pulse"}`}
       >
-        <info.icon className={`size-3.5 ${isJuiceFallback ? "activity-citrus-icon" : ""}`} />
+        {isJuiceFallback
+          ? <PressedSpinner size={16} />
+          : <info.icon className="size-3.5" />}
       </div>
       <div className="min-w-0 flex-1">
         <div className={`${isJuiceFallback ? "activity-juice-text text-base" : "text-sm"} font-semibold ${cls.label}`}>
@@ -765,9 +795,9 @@ function FilePathChip({
       onClick={onOpenFile ? () => onOpenFile(path) : undefined}
       disabled={!onOpenFile}
       title={path}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-neutral-100 hover:bg-neutral-200 disabled:hover:bg-neutral-100 disabled:cursor-default text-[12px] font-mono text-ink-700 align-middle"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-neutral-900 hover:bg-neutral-800 disabled:hover:bg-neutral-900 disabled:cursor-default text-[12px] font-mono text-white align-middle"
     >
-      <LuFile className="size-3 text-ink-400" />
+      <LuFile className="size-3 text-neutral-400" />
       {base}
     </button>
   );
@@ -904,15 +934,45 @@ function AssistantBubble({
   time?: string | null;
   onRetry?: (text: string) => void;
 }) {
+  const segments = useMemo(() => splitChartBlocks(text), [text]);
+  const hasCharts = segments.some((s) => s.kind === "chart");
+
   return (
     <div className="flex justify-start">
-      <div className="max-w-[75%] min-w-0">
-        <div
-          className="bg-white rounded-2xl rounded-tl-md shadow-soft px-4 py-2.5 text-sm text-ink-800 markdown-body"
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
-        />
+      <div className={`${hasCharts ? "max-w-[90%] w-full" : "max-w-[75%]"} min-w-0`}>
+        <div className="bg-white rounded-2xl rounded-tl-md shadow-soft px-4 py-2.5 text-sm text-ink-800">
+          {segments.map((seg, i) =>
+            seg.kind === "md" ? (
+              <div
+                key={i}
+                className="markdown-body"
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(seg.text) }}
+              />
+            ) : (
+              <InlineChart key={i} json={seg.json} />
+            )
+          )}
+        </div>
         <MessageActions text={text} time={time} onRetry={onRetry} />
       </div>
+    </div>
+  );
+}
+
+function InlineChart({ json }: { json: string }) {
+  const spec = useMemo(() => tryParseChartSpec(json), [json]);
+  if (!spec) {
+    return (
+      <div className="my-2 rounded-lg bg-rose-50 px-3 py-2 text-xs font-mono text-rose-600">
+        Invalid chart spec
+      </div>
+    );
+  }
+  return (
+    <div className="my-3 -mx-1">
+      <Suspense fallback={<div className="h-[224px] animate-pulse rounded-xl bg-neutral-50" />}>
+        <LazyChartView spec={spec} />
+      </Suspense>
     </div>
   );
 }

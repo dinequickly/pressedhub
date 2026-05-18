@@ -17,6 +17,7 @@ import { SkillsPage } from "./pages/SkillsPage";
 import { SkillBuilderPage } from "./pages/SkillBuilderPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { SheetsPage } from "./pages/SheetsPage";
+import { AnimationsPage } from "./pages/AnimationsPage";
 
 function ProtectedRoutes() {
   const { loading, profile, jwt } = useAuth();
@@ -72,6 +73,7 @@ function ProtectedRoutes() {
               <Route path="/skills/new" element={<SkillBuilderPage />} />
               <Route path="/skills/:id" element={<SkillBuilderPage />} />
               <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/animations" element={<AnimationsPage />} />
               <Route path="*" element={<Navigate to="/chat" replace />} />
             </Routes>
           </AppShell>

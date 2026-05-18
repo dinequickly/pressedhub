@@ -1,17 +1,25 @@
-// /roster — agent cards styled like the mockup: avatar + name header, message
-// body, stat sidebar, sparkline, and contextual CTA buttons (Review / Needs
-// Help / Open Files depending on roster_status.cta + tone).
+import React, { lazy, Suspense, useState, useMemo } from "react";
 
-import React, { useState, useMemo } from "react";
+const LazyChartView = lazy(() =>
+  import("../components/ChartView").then((m) => ({ default: m.ChartView }))
+);
 import { useNavigate } from "react-router-dom";
 import {
   LuLoader, LuPause, LuPlay, LuZap, LuSettings, LuMessageSquare,
   LuFileText, LuEllipsis, LuArrowUpDown,
 } from "react-icons/lu";
-import { api, type Environment, type RosterEntry, type Session } from "../lib/api";
-import { refresh, useApi } from "../lib/swr";
+import { api, type RosterEntry } from "../lib/api";
+import { useApi } from "../lib/swr";
 import { EmptyState, Page } from "../components/Page";
-import { humanCron } from "../lib/cron";
+import { OrbAvatar, orbTheme } from "../components/OrbAvatar";
+import { PressedSpinner } from "../components/PressedSpinner";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type Tone = "ok" | "warn" | "running" | "idle";
 type SortKey = "last_run" | "next_run" | "name";
@@ -59,14 +67,15 @@ export function RosterPage() {
   return (
     <Page title="Roster" subtitle="Your agents on the clock.">
       <div className="px-6 py-4 min-h-full">
-        {/* Toolbar */}
         <div className="flex items-center gap-2 mb-5">
-          <button
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full gap-2"
             onClick={() => setFilter(f => {
               const i = FILTER_CYCLE.indexOf(f);
               return FILTER_CYCLE[(i + 1) % FILTER_CYCLE.length];
             })}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-neutral-200 bg-white text-sm text-ink-700 hover:border-neutral-300 hover:shadow-sm transition-all"
           >
             {filter !== "all" && (
               <span
@@ -75,21 +84,23 @@ export function RosterPage() {
               />
             )}
             {FILTER_LABELS[filter]}
-            <span className="text-ink-300 text-xs">▾</span>
-          </button>
+            <span className="text-muted-foreground text-xs">▾</span>
+          </Button>
 
-          <button
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full gap-1.5 ml-auto"
             onClick={() => setSort(s => s === "last_run" ? "next_run" : s === "next_run" ? "name" : "last_run")}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200 bg-white text-sm text-ink-700 hover:border-neutral-300 hover:shadow-sm transition-all ml-auto"
           >
-            <LuArrowUpDown className="size-3.5 text-ink-400" />
+            <LuArrowUpDown className="size-3.5" />
             Sort: {SORT_LABELS[sort]}
-          </button>
+          </Button>
         </div>
 
         {isLoading ? (
-          <div className="text-sm text-ink-500 flex items-center gap-2 py-8">
-            <LuLoader className="animate-spin size-4" /> Loading…
+          <div className="text-sm text-muted-foreground flex items-center gap-2 py-8">
+            <PressedSpinner size={18} /> Loading…
           </div>
         ) : entries.length === 0 ? (
           <EmptyState
@@ -108,23 +119,6 @@ export function RosterPage() {
   );
 }
 
-async function startChat(entry: RosterEntry): Promise<Session> {
-  const fresh = await api.get<{ data: Environment[] }>("/environments");
-  let env = fresh.data?.[0];
-  if (!env) {
-    env = await api.post<Environment>("/environments", {
-      name: "Default",
-      config: { type: "cloud", networking: { type: "unrestricted" } },
-    });
-    refresh("/environments");
-  }
-  return api.post<Session>("/sessions", {
-    agent_id: entry.agent.id,
-    environment_id: env.id,
-    title: `Chat with ${entry.agent.name}`,
-  });
-}
-
 function RosterCard({
   entry, onChanged, onSettings,
 }: { entry: RosterEntry; onChanged: () => void; onSettings: () => void }) {
@@ -138,16 +132,12 @@ function RosterCard({
   const rs = entry.last_session?.roster_status;
   const [,, orbMid, orbDark] = orbTheme(entry.agent.id);
 
-  // Derive primary CTA
   let ctaLabel = "Chat";
   let ctaIsHighlighted = false;
   if (rs?.cta === "open_files") {
     ctaLabel = "Open Files";
   } else if (status.tone === "warn") {
     ctaLabel = "Review";
-    ctaIsHighlighted = true;
-  } else if (entry.last_session?.status === "idle") {
-    ctaLabel = "Needs Help";
     ctaIsHighlighted = true;
   }
 
@@ -157,7 +147,6 @@ function RosterCard({
       if (entry.last_session) nav(`/runs/${entry.last_session.id}`);
       return;
     }
-    // Open the chat page and let the user start/configure the session there
     nav("/chat", { state: { newChatAgentId: entry.agent.id } });
   }
 
@@ -165,8 +154,7 @@ function RosterCard({
     if (entry.last_session) nav(`/runs/${entry.last_session.id}`);
   }
 
-  async function toggle(e: React.MouseEvent) {
-    e.stopPropagation();
+  async function toggle() {
     if (busy) return;
     const paused = entry.status === "paused";
     setBusy("toggle");
@@ -178,8 +166,7 @@ function RosterCard({
     } finally { setBusy(null); }
   }
 
-  async function runNow(e: React.MouseEvent) {
-    e.stopPropagation();
+  async function runNow() {
     if (busy) return;
     setBusy("run");
     try {
@@ -194,8 +181,7 @@ function RosterCard({
   const accent = entry.agent.accent || "#6366f1";
 
   return (
-    <div className="bg-white rounded-2xl border border-neutral-200 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_20px_rgba(0,0,0,0.03)] flex flex-col overflow-hidden">
-      {/* Avatar banner */}
+    <div className="bg-card rounded-2xl border border-border shadow-sm flex flex-col overflow-hidden">
       <div
         className="flex justify-center pt-5 pb-4"
         style={{ background: `linear-gradient(160deg, ${accent}12 0%, ${accent}06 100%)` }}
@@ -203,10 +189,33 @@ function RosterCard({
         <OrbAvatar seed={entry.agent.id} size={72} />
       </div>
 
-      {/* Name + status */}
-      <div className="px-4 pb-3 text-center">
-        <h3 className="text-[14px] font-medium text-ink-900 leading-tight">{entry.agent.name}</h3>
-        <div className="text-[11px] text-ink-400 mt-0.5">{entry.name}</div>
+      {rs?.cta === "open_files" && rs?.file_name && (
+        <button
+          type="button"
+          onClick={openPrimary}
+          className="w-full px-4 py-2.5 flex items-center gap-3 border-b border-border text-left transition-opacity hover:opacity-80"
+          style={{ backgroundColor: cfg.dot + "18" }}
+        >
+          <div
+            className="size-7 rounded-md flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: cfg.dot + "30" }}
+          >
+            <LuFileText className="size-3.5" style={{ color: cfg.dot }} />
+          </div>
+          <div className="min-w-0 flex-1">
+            {rs.label && (
+              <div className="text-[10px] font-bold uppercase tracking-wide leading-none mb-0.5" style={{ color: cfg.dot }}>
+                {rs.label}
+              </div>
+            )}
+            <div className="text-[11px] text-foreground/80 truncate">{rs.file_name}</div>
+          </div>
+        </button>
+      )}
+
+      <div className={`px-4 pb-3 text-center ${rs?.cta === "open_files" && rs?.file_name ? "pt-3" : ""}`}>
+        <h3 className="text-[14px] font-medium leading-tight">{entry.agent.name}</h3>
+        <div className="text-[11px] text-muted-foreground mt-0.5">{entry.name}</div>
         <div className="flex items-center justify-center mt-2">
           {cfgKey === "warn" ? (
             <span
@@ -219,236 +228,97 @@ function RosterCard({
           ) : (
             <span className="flex items-center gap-1.5">
               <span className="size-1.5 rounded-full" style={{ backgroundColor: cfg.dot }} />
-              <span className="text-[10px] uppercase tracking-widest text-ink-500 font-medium">{cfg.label}</span>
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">{cfg.label}</span>
             </span>
           )}
         </div>
       </div>
 
-      {/* Message body */}
       <div className="px-4 pb-3 flex-1">
-        <p className="text-sm text-ink-600 leading-relaxed">
+        <p className="text-sm text-foreground/70 leading-relaxed">
           {status.tone === "running" && (
-            <LuLoader className="inline size-3 mr-1 -mt-0.5 animate-spin text-violet-400" />
+            <PressedSpinner size={12} className="inline-block mr-1 -mt-0.5 align-middle" />
           )}
           {stripMd(status.message)}
         </p>
       </div>
 
-      {/* Stats row */}
+      {rs?.chart && (
+        <div className="px-3 pb-3">
+          <Suspense fallback={<div className="h-[60px] rounded-lg bg-muted/30 animate-pulse" />}>
+            <LazyChartView spec={rs.chart} compact />
+          </Suspense>
+        </div>
+      )}
+
       <div className="mx-4 mb-4 grid grid-cols-2 gap-2">
-        <div className="rounded-xl bg-neutral-50 px-3 py-2">
-          <div className="text-[10px] text-ink-400 uppercase tracking-wide">Last run</div>
-          <div className="text-sm font-medium text-ink-800 mt-0.5">
+        <div className="rounded-xl bg-muted/50 px-3 py-2">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Last run</div>
+          <div className="text-sm font-medium mt-0.5">
             {entry.last_run_at ? relative(entry.last_run_at) : "Never"}
           </div>
         </div>
-        <div className="rounded-xl bg-neutral-50 px-3 py-2">
-          <div className="text-[10px] text-ink-400 uppercase tracking-wide">Next run</div>
-          <div className={`text-sm font-medium mt-0.5 ${entry.status !== "paused" && new Date(entry.next_run_at) < new Date() ? "text-orange-500" : "text-ink-800"}`}>
+        <div className="rounded-xl bg-muted/50 px-3 py-2">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Next run</div>
+          <div className={`text-sm font-medium mt-0.5 ${entry.status !== "paused" && new Date(entry.next_run_at) < new Date() ? "text-orange-500" : ""}`}>
             {entry.status === "paused" ? "—" : relative(entry.next_run_at)}
           </div>
         </div>
       </div>
 
-      {/* Footer action row */}
-      <div className="border-t border-neutral-100 flex divide-x divide-neutral-100">
-        <FooterBtn
-          label={opening ? "Opening…" : ctaLabel}
-          highlighted={ctaIsHighlighted}
-          accentBg={orbMid}
-          icon={rs?.cta === "open_files" ? <LuFileText className="size-3.5" /> : <LuMessageSquare className="size-3.5" />}
-          onClick={openPrimary}
+      <div className="border-t border-border flex divide-x divide-border">
+        <button
+          type="button"
           disabled={opening}
-        />
-        <FooterBtn
-          label="Ask"
-          icon={<LuMessageSquare className="size-3.5" />}
           onClick={openPrimary}
-        />
-        <FooterBtn
-          label="Logs"
+          className="flex-1 py-2.5 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40"
+          style={ctaIsHighlighted
+            ? { backgroundColor: orbMid, color: "#fff" }
+            : { color: "var(--muted-foreground)" }
+          }
+          onMouseEnter={e => { if (!ctaIsHighlighted) (e.currentTarget as HTMLButtonElement).style.backgroundColor = "var(--muted)"; }}
+          onMouseLeave={e => { if (!ctaIsHighlighted) (e.currentTarget as HTMLButtonElement).style.backgroundColor = ""; }}
+        >
+          {rs?.cta === "open_files" ? <LuFileText className="size-3.5" /> : <LuMessageSquare className="size-3.5" />}
+          {opening ? "Opening…" : ctaLabel}
+        </button>
+
+        <button
+          type="button"
           onClick={openLogs}
           disabled={!entry.last_session}
-        />
-        <MoreBtn
-          paused={entry.status === "paused"}
-          busy={busy}
-          onToggle={toggle}
-          onRunNow={runNow}
-          onSettings={onSettings}
-        />
-      </div>
-    </div>
-  );
-}
+          className="flex-1 py-2.5 text-xs font-medium text-muted-foreground flex items-center justify-center gap-1.5 transition-colors hover:bg-muted/50 disabled:opacity-40"
+        >
+          Logs
+        </button>
 
-
-function FooterBtn({
-  label, icon, highlighted, accentBg, onClick, disabled,
-}: {
-  label: string;
-  icon?: React.ReactNode;
-  highlighted?: boolean;
-  accentBg?: string;
-  onClick?: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="flex-1 py-2.5 text-xs font-medium flex items-center justify-center gap-1.5 transition-all disabled:opacity-40"
-      style={highlighted
-        ? { backgroundColor: accentBg ?? "#171717", color: "#fff" }
-        : { color: "#6b7280" }
-      }
-      onMouseEnter={e => { if (!highlighted) (e.currentTarget as HTMLButtonElement).style.backgroundColor = "#f9fafb"; }}
-      onMouseLeave={e => { if (!highlighted) (e.currentTarget as HTMLButtonElement).style.backgroundColor = ""; }}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function MoreBtn({
-  paused, busy, onToggle, onRunNow, onSettings,
-}: {
-  paused: boolean;
-  busy: "toggle" | "run" | null;
-  onToggle: (e: React.MouseEvent) => void;
-  onRunNow: (e: React.MouseEvent) => void;
-  onSettings: () => void;
-}) {
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
-  const btnRef = React.useRef<HTMLButtonElement>(null);
-
-  function openMenu() {
-    if (!btnRef.current) return;
-    const r = btnRef.current.getBoundingClientRect();
-    setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
-  }
-
-  return (
-    <>
-      <button
-        ref={btnRef}
-        type="button"
-        onClick={openMenu}
-        className="w-10 py-2.5 flex items-center justify-center text-ink-400 hover:text-ink-600 hover:bg-neutral-50 transition-colors"
-      >
-        <LuEllipsis className="size-4" />
-      </button>
-      {pos && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setPos(null)} />
-          <div
-            className="fixed z-50 bg-white border border-neutral-200 rounded-xl shadow-lg py-1 min-w-[140px] text-sm"
-            style={{ top: pos.top, right: pos.right }}
-          >
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
             <button
-              className="w-full px-3 py-1.5 text-left text-ink-700 hover:bg-neutral-50 flex items-center gap-2"
-              onClick={(e) => { setPos(null); onToggle(e); }}
+              type="button"
+              className="w-10 py-2.5 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
             >
+              <LuEllipsis className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[140px]">
+            <DropdownMenuItem onClick={toggle}>
               {busy === "toggle"
                 ? <LuLoader className="size-3.5 animate-spin" />
-                : paused ? <LuPlay className="size-3.5" /> : <LuPause className="size-3.5" />}
-              {paused ? "Resume" : "Pause"}
-            </button>
-            <button
-              className="w-full px-3 py-1.5 text-left text-ink-700 hover:bg-neutral-50 flex items-center gap-2"
-              onClick={(e) => { setPos(null); onRunNow(e); }}
-            >
+                : entry.status === "paused" ? <LuPlay className="size-3.5" /> : <LuPause className="size-3.5" />}
+              {entry.status === "paused" ? "Resume" : "Pause"}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={runNow}>
               {busy === "run" ? <LuLoader className="size-3.5 animate-spin" /> : <LuZap className="size-3.5" />}
               Run now
-            </button>
-            <button
-              className="w-full px-3 py-1.5 text-left text-ink-700 hover:bg-neutral-50 flex items-center gap-2"
-              onClick={() => { setPos(null); onSettings(); }}
-            >
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onSettings}>
               <LuSettings className="size-3.5" />
               Settings
-            </button>
-          </div>
-        </>
-      )}
-    </>
-  );
-}
-
-
-// [veryLight, light, mid, deep] per hue — high contrast for distinct rays
-const ORB_THEMES: [string, string, string, string][] = [
-  ["#ccf7fe", "#67e0f5", "#0ea5c9", "#083060"],  // cyan-blue (like reference)
-  ["#bbf7d0", "#4ade80", "#16a34a", "#052e16"],  // emerald
-  ["#ede9fe", "#c4b5fd", "#7c3aed", "#1e0a50"],  // violet
-  ["#bae6fd", "#7dd3fc", "#0284c7", "#082050"],  // sky
-  ["#fce7f3", "#f9a8d4", "#db2777", "#500030"],  // rose
-  ["#fef9c3", "#fde047", "#ca8a04", "#451a03"],  // amber
-  ["#d1fae5", "#6ee7b7", "#059669", "#022c22"],  // teal
-  ["#e0e7ff", "#a5b4fc", "#4f46e5", "#1e1b4b"],  // indigo
-];
-
-function orbTheme(seed: string): [string, string, string, string] {
-  let h = 5381;
-  for (let i = 0; i < seed.length; i++) h = ((h << 5) + h + seed.charCodeAt(i)) | 0;
-  return ORB_THEMES[(h >>> 0) % ORB_THEMES.length];
-}
-
-function OrbAvatar({ seed, size = 72 }: { seed: string; size?: number }) {
-  const [vl, l, m, d] = useMemo(() => orbTheme(seed), [seed]);
-
-  const blurA = Math.round(size * 0.08);
-  const blurB = Math.round(size * 0.06);
-
-  return (
-    <div style={{ width: size, height: size, borderRadius: "50%", overflow: "hidden", position: "relative", flexShrink: 0 }}>
-      {/* Base fill */}
-      <div style={{ position: "absolute", inset: 0, background: l }} />
-
-      {/* Layer A: slow CW — wide light wedges */}
-      <div
-        className="orb-spin-a"
-        style={{
-          position: "absolute",
-          width: "260%", height: "260%",
-          top: "-80%", left: "-80%",
-          background: `conic-gradient(from 0deg,
-            ${vl}, ${l}, ${vl}, ${m}, ${l},
-            ${vl}, ${l}, ${vl}, ${m}, ${l},
-            ${vl}, ${l}, ${vl}, ${m}, ${l}, ${vl})`,
-          filter: `blur(${blurA}px)`,
-        }}
-      />
-
-      {/* Layer B: faster CCW — narrow deep wedges, creates interference */}
-      <div
-        className="orb-spin-b"
-        style={{
-          position: "absolute",
-          width: "240%", height: "240%",
-          top: "-70%", left: "-70%",
-          background: `conic-gradient(from 0deg,
-            ${d}, ${d}, ${m}, ${l}, ${m},
-            ${d}, ${d}, ${m}, ${l}, ${m}, ${d})`,
-          filter: `blur(${blurB}px)`,
-          opacity: 0.72,
-        }}
-      />
-
-      {/* Edge darkening for sphere depth */}
-      <div style={{
-        position: "absolute", inset: 0,
-        background: `radial-gradient(circle at 50% 50%, transparent 30%, ${d}55 68%, ${d}aa 100%)`,
-      }} />
-
-      {/* Glass highlight */}
-      <div style={{
-        position: "absolute", inset: 0,
-        background: `radial-gradient(circle at 34% 28%, rgba(255,255,255,0.65) 0%, rgba(255,255,255,0.05) 42%, transparent 58%)`,
-      }} />
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 }
@@ -464,7 +334,11 @@ function derive(entry: RosterEntry): { message: string; tone: Tone } {
   if (ls.status === "running" || ls.status === "rescheduling") {
     return { message: thought ?? said ?? "Working on it…", tone: "running" };
   }
-  if (ls.status === "idle") return { message: said ?? "Got something I need from you.", tone: "warn" };
+  if (ls.status === "idle") {
+    const isScheduled = ls.trigger_summary?.startsWith("schedule:");
+    if (isScheduled) return { message: said ?? ls.title ?? "Completed.", tone: "ok" };
+    return { message: said ?? "Got something I need from you.", tone: "warn" };
+  }
   if (ls.status === "terminated") return { message: said ?? ls.title ?? "All wrapped up.", tone: "ok" };
   return { message: said ?? ls.title ?? ls.status, tone: "idle" };
 }
@@ -503,3 +377,4 @@ function relative(iso: string): string {
   if (hr < 24) return `${sign}${hr}h${tail}`;
   return `${sign}${day}d${tail}`;
 }
+

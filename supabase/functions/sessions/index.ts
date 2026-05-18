@@ -30,6 +30,19 @@ import { ENV } from "../_shared/env.ts";
 import { writeAudit } from "../_shared/audit.ts";
 import { serviceClient } from "../_shared/supabase.ts";
 
+function buildMemoryInstructions(storeName: string): string {
+  return `This is your persistent memory store: "${storeName}".
+
+IMPORTANT: At the end of every session, write key findings, decisions, and produced artifacts here using your file write tools. Do NOT write to /tmp/ — those files are lost when the session ends.
+
+Write to paths like:
+  /findings/YYYY-MM-DD_topic.md   — research output, analysis results
+  /context/ongoing.md             — running context, open questions, next steps
+  /artifacts/YYYY-MM-DD_name.ext  — any files you produced that should persist
+
+At the START of each session, read your prior entries here to build on past work rather than starting cold.`.slice(0, 4096);
+}
+
 const router = new Router("sessions");
 
 router.get("/", async (req) => {
@@ -155,21 +168,38 @@ router.post("/", async (req) => {
     }
   }
 
-  if (parsed.memory_store_ids?.length) {
+  // Merge explicit memory_store_ids with the agent's defaults. Deduplicate so
+  // an id in both lists doesn't mount the same store twice (API would reject it).
+  const defaultMemoryIds: string[] = (agent as any)?.default_resources?.memory_store_ids ?? [];
+  const allMemoryIds = Array.from(
+    new Set([...(parsed.memory_store_ids ?? []), ...defaultMemoryIds]),
+  );
+  const alreadyMountedStores = new Set<string>();
+
+  if (allMemoryIds.length) {
     const { data: stores } = await user.db
       .from("memory_stores")
-      .select("id,name,anthropic_id")
-      .in("id", parsed.memory_store_ids);
+      .select("id,name,description,anthropic_id")
+      .in("id", allMemoryIds);
     for (const s of stores ?? []) {
       if (!s.anthropic_id) {
-        throw new BadRequest(
-          `Memory store ${s.name} has no anthropic_id. POST /memory/stores/${s.id}/sync-to-anthropic first.`,
-        );
+        // Only hard-fail for explicitly requested stores; silently skip defaults so
+        // a missing sync doesn't block session creation.
+        if ((parsed.memory_store_ids ?? []).includes(s.id as string)) {
+          throw new BadRequest(
+            `Memory store ${s.name} has no anthropic_id. POST /memory/stores/${s.id}/sync-to-anthropic first.`,
+          );
+        }
+        console.warn(`[sessions] skipping default memory store ${s.id} — no anthropic_id`);
+        continue;
       }
+      if (alreadyMountedStores.has(s.anthropic_id as string)) continue;
+      alreadyMountedStores.add(s.anthropic_id as string);
       resources.push({
         type: "memory_store",
         memory_store_id: s.anthropic_id as string,
         access: "read_write",
+        instructions: buildMemoryInstructions(s.name as string),
       });
     }
   }

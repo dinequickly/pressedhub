@@ -3,10 +3,14 @@
 // images, pdf) are zero-bundle. xlsx / docx lazy-load their parser only
 // when the user hits "Show preview". pptx is download-only.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { LuDownload, LuFileText, LuLoader, LuTriangleAlert } from "react-icons/lu";
 import { api } from "../lib/api";
-import type { RunOutput } from "../lib/api";
+import type { ChartSpec, RunOutput } from "../lib/api";
+
+const LazyChartView = lazy(() =>
+  import("./ChartView").then((m) => ({ default: m.ChartView }))
+);
 import { FN_URL, supabase } from "../lib/supabase";
 import { SlideEditor } from "./SlideEditor";
 import { humanizeBytes } from "../lib/format";
@@ -16,6 +20,7 @@ type Kind =
   | "text"
   | "csv"
   | "json"
+  | "chart"
   | "image"
   | "pdf"
   | "xlsx"
@@ -27,6 +32,8 @@ function classify(name: string | null, mime: string | null): Kind {
   const lower = (name ?? "").toLowerCase();
   const ext = lower.includes(".") ? lower.slice(lower.lastIndexOf(".") + 1) : "";
   const m = (mime ?? "").toLowerCase();
+  if (lower.endsWith(".chart.json")) return "chart";
+  if (m === "application/vnd.pressed.chart+json") return "chart";
   if (ext === "md" || m === "text/markdown") return "markdown";
   if (ext === "csv" || m === "text/csv") return "csv";
   if (ext === "json" || m === "application/json") return "json";
@@ -74,6 +81,8 @@ function Renderer({
     case "csv":
     case "json":
       return <TextLikePreview kind={kind} proxyPath={proxyPath} />;
+    case "chart":
+      return <ChartFilePreview proxyPath={proxyPath} />;
     case "image":
     case "pdf":
       return <BlobPreview kind={kind} proxyPath={proxyPath} />;
@@ -143,6 +152,38 @@ function BlobPreview({ kind, proxyPath }: { kind: Kind; proxyPath: string }) {
     );
   }
   return <iframe src={url} className="w-full h-full min-h-[80vh] bg-white" />;
+}
+
+function ChartFilePreview({ proxyPath }: { proxyPath: string }) {
+  const [spec, setSpec] = useState<ChartSpec | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.getRaw(proxyPath)
+      .then((r) => r.text())
+      .then((text) => {
+        if (cancelled) return;
+        try {
+          const parsed = JSON.parse(text) as ChartSpec;
+          if (!parsed.series || !parsed.data) throw new Error("Missing series or data");
+          setSpec(parsed);
+        } catch (e) {
+          setErr((e as Error).message);
+        }
+      })
+      .catch((e) => { if (!cancelled) setErr((e as Error).message); });
+    return () => { cancelled = true; };
+  }, [proxyPath]);
+
+  if (err) return <PreviewError msg={err} />;
+  if (!spec) return <PreviewLoading />;
+  return (
+    <div className="p-5">
+      <Suspense fallback={<PreviewLoading />}>
+        <LazyChartView spec={spec} />
+      </Suspense>
+    </div>
+  );
 }
 
 function LazyXlsxPreview({ proxyPath }: { proxyPath: string }) {

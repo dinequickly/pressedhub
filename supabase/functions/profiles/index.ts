@@ -4,6 +4,8 @@
 //   PATCH  /me                    Update display name / tint.
 //   POST   /bootstrap-admin       Promote the first user in the system to admin.
 //   POST   /:id/promote           Promote a user to admin (admin only).
+//   GET    /workspace-settings    Return workspace-level UI settings (any authed user).
+//   PATCH  /workspace-settings    Update workspace-level UI settings (admin only).
 
 import { wrap } from "../_shared/cors.ts";
 import { Router, readJson } from "../_shared/router.ts";
@@ -90,6 +92,34 @@ router.post("/:id/promote", async (req, params) => {
     resource_id: params.id,
   });
   return ok({ promoted: true });
+});
+
+router.get("/workspace-settings", async (req) => {
+  const user = await requireUser(req);
+  const { data, error } = await user.db
+    .from("workspace_settings")
+    .select("*")
+    .eq("id", "default")
+    .single();
+  if (error) throw new Error(error.message);
+  return ok(data);
+});
+
+router.patch("/workspace-settings", async (req) => {
+  const user = await requireUser(req);
+  requireAdmin(user);
+  const body = await readJson<{ hidden_nav_pages?: string[] }>(req);
+  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (Array.isArray(body.hidden_nav_pages)) update.hidden_nav_pages = body.hidden_nav_pages;
+  const sc = serviceClient();
+  const { data, error } = await sc
+    .from("workspace_settings")
+    .update(update)
+    .eq("id", "default")
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return ok(data);
 });
 
 Deno.serve(wrap((req) => router.handle(req)));

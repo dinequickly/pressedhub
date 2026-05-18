@@ -129,6 +129,12 @@ export type Profile = {
   role: "admin" | "member"; initial: string; tint: string;
 };
 
+export type WorkspaceSettings = {
+  id: string;
+  hidden_nav_pages: string[];
+  updated_at: string;
+};
+
 export type Connector = {
   id: string; name: string; group: "apps" | "system" | "ai";
   icon_class: string; tint: string;
@@ -158,6 +164,16 @@ export type Session = {
   usage: Record<string, number>;
   trigger_summary: string | null; trigger_payload: unknown;
   started_at: string; finished_at: string | null;
+};
+
+export type ChartSpec = {
+  type: "bar" | "line" | "area" | "pie" | "donut";
+  title?: string;
+  description?: string;
+  x?: string;
+  series: Array<{ key: string; label?: string; color?: string }>;
+  data: Array<Record<string, unknown>>;
+  kb_file_id?: string;
 };
 
 export type SessionEvent = {
@@ -283,6 +299,7 @@ export type RosterEntry = {
       title: string | null;
       started_at: string;
       finished_at: string | null;
+      trigger_summary?: string | null;
       // Most recent agent.message text from this session, if any. Backend
       // pulls this from session_events when building /schedules/roster.
       latest_message?: string | null;
@@ -298,6 +315,7 @@ export type RosterEntry = {
         cta?: "open_chat" | "open_files" | "none" | null;
         file_name?: string | null;
         updated_at?: string | null;
+        chart?: ChartSpec | null;
       } | null;
     }
     | null;

@@ -84,7 +84,7 @@ router.get("/roster", async (req) => {
       id,name,cron,timezone,status,next_run_at,last_run_at,last_session_id,
       trigger_message,
       agent:agents!inner(id,name,role,emoji,accent),
-      last_session:sessions!last_session_id(id,status,title,started_at,finished_at)
+      last_session:sessions!last_session_id(id,status,title,started_at,finished_at,trigger_summary)
     `)
     .order("next_run_at", { ascending: true });
   if (error) throw new Error(error.message);
@@ -245,27 +245,51 @@ router.patch("/:id", async (req, params) => {
   return ok(data);
 });
 
-// Bump next_run_at to now so the next /tick claims this schedule. Cheaper
-// than duplicating session-start logic and keeps "run now" on the same
-// happy path as a normal cron fire.
+// Immediately start a session for this schedule. Uses the same session-start
+// path as the tick so the roster and schedule_runs table update right away
+// instead of waiting up to 60s for the next cron tick.
 router.post("/:id/run", async (req, params) => {
   const user = await requireUser(req);
-  const { data: existing } = await user.db
-    .from("agent_schedules").select("status").eq("id", params.id).maybeSingle();
-  if (!existing) throw new NotFound("Schedule not found");
-  if (existing.status !== "active") {
-    throw new BadRequest("Resume the schedule before running it");
+  const sc = serviceClient();
+  const { data: row } = await user.db
+    .from("agent_schedules").select("*").eq("id", params.id).maybeSingle();
+  if (!row) throw new NotFound("Schedule not found");
+  if (row.status !== "active") throw new BadRequest("Resume the schedule before running it");
+
+  const scheduledFor = new Date().toISOString();
+  const { data: runRow, error: runErr } = await sc
+    .from("schedule_runs")
+    .insert({ schedule_id: params.id, scheduled_for: scheduledFor, status: "pending" })
+    .select().single();
+  if (runErr) throw new BadRequest(`run insert: ${runErr.message}`);
+
+  let session: { localId: string; anthropicId: string } | null = null;
+  try {
+    session = await startScheduledSession(sc, row, runRow.id as string);
+  } catch (err) {
+    await sc.from("schedule_runs").update({
+      status: "failed",
+      finished_at: new Date().toISOString(),
+      error: (err as Error).message.slice(0, 500),
+    }).eq("id", runRow.id);
+    throw err;
   }
-  const { data, error } = await user.db
+
+  await sc.from("schedule_runs").update({
+    status: "running", session_id: session.localId,
+  }).eq("id", runRow.id);
+  const now = new Date().toISOString();
+  const { data: updated } = await sc
     .from("agent_schedules")
-    .update({ next_run_at: new Date().toISOString() })
+    .update({ last_run_at: now, last_session_id: session.localId })
     .eq("id", params.id).select().single();
-  if (error) throw new BadRequest(error.message);
+  await advanceNext(sc, row);
+
   await writeAudit({
     actor_id: user.id, action: "schedule.run_now",
     resource_type: "agent_schedule", resource_id: params.id,
   });
-  return ok(data);
+  return ok({ schedule: updated, run: runRow, session: { id: session.localId, anthropic_id: session.anthropicId } }, 201);
 });
 
 router.delete("/:id", async (req, params) => {
@@ -373,6 +397,13 @@ async function advanceNext(sc: ReturnType<typeof serviceClient>, row: Record<str
   }).eq("id", row.id as string);
 }
 
+function buildScheduledMessage(row: Record<string, unknown>): string {
+  const now = new Date().toUTCString();
+  const header = `[Scheduled run: "${row.name}" · ${now}]\nThis is an automated scheduled task — no human is watching. Work autonomously to completion. When done, call set_roster_status to report your outcome so the roster card updates.`;
+  const userMessage = (row.trigger_message as string | null)?.trim();
+  return userMessage ? `${header}\n\n${userMessage}` : header;
+}
+
 async function startScheduledSession(
   sc: ReturnType<typeof serviceClient>,
   row: Record<string, unknown>,
@@ -385,7 +416,7 @@ async function startScheduledSession(
     title: `${row.name} · scheduled`,
     triggerSummary: `schedule:${row.id}`,
     triggerPayload: (row.trigger_payload as Record<string, unknown>) ?? undefined,
-    initialMessage: (row.trigger_message as string | null) ?? null,
+    initialMessage: buildScheduledMessage(row),
   });
 }
 

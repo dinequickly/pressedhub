@@ -9,6 +9,7 @@ import { LuPlus } from "react-icons/lu";
 import { api, type Agent } from "../lib/api";
 import { refresh, useApi } from "../lib/swr";
 import { EmptyState, Modal, Page } from "../components/Page";
+import { OrbAvatar } from "../components/OrbAvatar";
 
 const DEFAULT_AGENT_MODEL = "claude-opus-4-7";
 
@@ -22,8 +23,8 @@ export function AgentsPage() {
       title="Agents"
       subtitle="Reusable teammates with saved instructions, skills, and working style."
       actions={
-        <button className="btn-primary" onClick={() => setCreating(true)}>
-          <LuPlus className="size-4" /> New agent
+        <button className="btn-primary" onClick={() => setCreating(true)} title="New agent" style={{ padding: "0.375rem 0.5rem" }}>
+          <LuPlus className="size-4" />
         </button>
       }
     >
@@ -42,9 +43,7 @@ export function AgentsPage() {
                 className="card text-left p-4 hover:border-violet-300 transition-colors"
               >
                 <div className="flex items-start gap-3">
-                  <div className="size-10 rounded-xl bg-violet-50 grid place-items-center text-lg">
-                    {a.emoji || "🤖"}
-                  </div>
+                  <OrbAvatar seed={a.id} size={40} />
                   <div className="min-w-0 flex-1">
                     <div className="font-medium truncate">{a.name}</div>
                     <div className="text-xs text-ink-500 truncate">{a.role || "—"}</div>

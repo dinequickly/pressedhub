@@ -5,63 +5,62 @@
 import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
-  LuPlus, LuBan, LuSend, LuPanelRight, LuFile, LuFileText,
+  LuPlus, LuBan, LuSend, LuFile, LuFileText,
   LuFileSpreadsheet, LuImage, LuFileCode, LuPresentation, LuPaperclip,
-  LuDownload, LuExternalLink, LuSearch, LuUpload,
+  LuDownload, LuExternalLink, LuSearch, LuUpload, LuChevronDown,
 } from "react-icons/lu";
+
 import type { IconType } from "react-icons";
 import {
   api, type Agent, type Environment, type KbFile, type RunOutput, type Session, type SessionEvent,
 } from "../lib/api";
 import { refresh, useApi } from "../lib/swr";
-import { EmptyState, Modal, Page, StatusPill } from "../components/Page";
+import { Page, Modal, StatusPill } from "../components/Page";
 import { OutputPreview } from "../components/OutputPreview";
 import { ChatStream, JuiceLoader, LiveActivity } from "../components/ChatEvents";
 import { FN_URL, supabase } from "../lib/supabase";
 import { humanizeBytes } from "../lib/format";
 import { uploadKbFile } from "../lib/kb";
+import { OrbAvatar } from "../components/OrbAvatar";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export function ChatPage() {
   const { sessionId } = useParams<{ sessionId?: string }>();
   const location = useLocation();
-  const { data: sessions } = useApi<{ data: Session[] }>("/sessions", {
-    refreshInterval: 5000,
-  });
-  const [creating, setCreating] = useState(false);
-  const [defaultAgentId, setDefaultAgentId] = useState<string | undefined>();
+  const nav = useNavigate();
 
-  const list = sessions?.data ?? [];
-  const selectedId = sessionId ?? list[0]?.id ?? null;
-
-  // Roster "Chat" button passes agentId via nav state — auto-open modal pre-filled
+  // Agent pre-selected via Roster "Chat" button — read once then clear state
+  const preselectedAgentId = (location.state as { newChatAgentId?: string } | null)?.newChatAgentId;
   useEffect(() => {
-    const id = (location.state as { newChatAgentId?: string } | null)?.newChatAgentId;
-    if (id) {
-      setDefaultAgentId(id);
-      setCreating(true);
-      window.history.replaceState({}, "");
-    }
-  }, [location.state]);
+    if (preselectedAgentId) window.history.replaceState({}, "");
+  }, [preselectedAgentId]);
 
   return (
     <Page
       title="Chat"
       subtitle="Conversations with your agents, plus the files and outputs they work with along the way."
       actions={
-        <button className="btn-primary" onClick={() => { setDefaultAgentId(undefined); setCreating(true); }}>
-          <LuPlus className="size-4" /> New chat
-        </button>
+        sessionId ? (
+          <Button size="sm" onClick={() => nav("/chat")}>
+            <LuPlus className="size-4" /> New chat
+          </Button>
+        ) : undefined
       }
     >
       <div className="h-full overflow-hidden">
-        {selectedId ? (
-          <ChatSurface sessionId={selectedId} />
+        {sessionId ? (
+          <ChatSurface sessionId={sessionId} />
         ) : (
-          <EmptyState title="Start a chat" body="Create a chat to get the conversation going." />
+          <NewChatComposer initialAgentId={preselectedAgentId} />
         )}
       </div>
-
-      <NewChatModal open={creating} defaultAgentId={defaultAgentId} onClose={() => { setCreating(false); setDefaultAgentId(undefined); }} />
     </Page>
   );
 }
@@ -81,7 +80,6 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
   const [awaiting, setAwaiting] = useState(false);
   const [filesOpen, setFilesOpen] = useState(true);
   const [previewing, setPreviewing] = useState<RunOutput | null>(null);
-  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [attaching, setAttaching] = useState(false);
   // Events the user just sent that haven't shown up in the polled response
@@ -90,9 +88,21 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
   // matching text arrives.
   const [optimistic, setOptimistic] = useState<SessionEvent[]>([]);
   const [optimisticAttached, setOptimisticAttached] = useState<AttachedFile[]>([]);
+  const [dropTarget, setDropTarget] = useState(false);
+  const dragCounter = useRef(0);
   const eventsRef = useRef<HTMLDivElement>(null);
-  const attachMenuRef = useRef<HTMLDivElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  // Prevent the browser from navigating when a file is dropped outside our zone.
+  useEffect(() => {
+    const prevent = (e: DragEvent) => e.preventDefault();
+    window.addEventListener("dragover", prevent);
+    window.addEventListener("drop", prevent);
+    return () => {
+      window.removeEventListener("dragover", prevent);
+      window.removeEventListener("drop", prevent);
+    };
+  }, []);
 
   const status = data?.session?.status;
   const realEvents = data?.events ?? [];
@@ -200,20 +210,10 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
   }, [awaiting, realEvents, status]);
 
   useEffect(() => {
-    if (!attachMenuOpen) return;
-    function onPointerDown(e: MouseEvent) {
-      if (!attachMenuRef.current?.contains(e.target as Node)) setAttachMenuOpen(false);
-    }
-    window.addEventListener("mousedown", onPointerDown);
-    return () => window.removeEventListener("mousedown", onPointerDown);
-  }, [attachMenuOpen]);
-
-  useEffect(() => {
     setMessage("");
     setSending(false);
     setAwaiting(false);
     setPreviewing(null);
-    setAttachMenuOpen(false);
     setKbPickerOpen(false);
     setAttaching(false);
     setOptimistic([]);
@@ -310,7 +310,6 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
         kb_file_id: file.id,
       });
       if (!res.attached) throw new Error(res.error ?? `Couldn't attach ${file.name}`);
-      setAttachMenuOpen(false);
       setKbPickerOpen(false);
       mutate();
     } catch (err) {
@@ -324,7 +323,6 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
   async function uploadAndAttach(file: File) {
     setAttaching(true);
     setFilesOpen(true);
-    setAttachMenuOpen(false);
     let uploaded: KbFile | null = null;
     try {
       uploaded = await uploadKbFile(file);
@@ -368,9 +366,21 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <div className="h-full flex">
+    <div
+      className="h-full flex relative"
+      onDragEnter={(e) => { e.preventDefault(); dragCounter.current++; if (dragCounter.current === 1) setDropTarget(true); }}
+      onDragLeave={(e) => { e.preventDefault(); dragCounter.current--; if (dragCounter.current === 0) setDropTarget(false); }}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
+      onDrop={(e) => { e.preventDefault(); dragCounter.current = 0; setDropTarget(false); const f = e.dataTransfer.files?.[0]; if (f && !terminated) void uploadAndAttach(f); }}
+    >
+      {dropTarget && !terminated && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/80 border-2 border-dashed border-primary pointer-events-none">
+          <LuUpload className="size-8 text-primary" />
+          <span className="text-base font-medium text-primary">Drop to attach file</span>
+        </div>
+      )}
       <div className="flex-1 min-w-0 flex flex-col">
-      <div className="border-b border-neutral-200 px-6 py-3 flex items-center justify-between">
+      <div className="border-b border-border px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
           <h2 className="text-base font-semibold truncate">{session.title ?? "Untitled"}</h2>
           <StatusPill status={session.status} />
@@ -378,9 +388,9 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
         <div className="flex items-center gap-2" />
       </div>
 
-      <div ref={eventsRef} className="flex-1 overflow-y-auto px-6 py-5 space-y-3 bg-[linear-gradient(180deg,rgba(250,250,249,0.94),rgba(245,245,244,0.98))]">
+      <div ref={eventsRef} className="flex-1 overflow-y-auto px-6 py-5 space-y-3 bg-muted/20">
         {events.length === 0 ? (
-          <div className="text-sm text-ink-500">Say something to get started…</div>
+          <div className="text-sm text-muted-foreground">Say something to get started…</div>
         ) : (
           <ChatErrorBoundary>
             <ChatStream events={events} onRetry={retry} onOpenFile={openFile} />
@@ -389,62 +399,53 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
         {(awaiting || session.status === "running") && <LiveActivity events={events} />}
       </div>
 
-      <div className="border-t border-neutral-200 px-6 py-3 flex gap-2 bg-white">
-        <div className="relative" ref={attachMenuRef}>
-          <button
-            className="btn-ghost size-10 p-0 grid place-items-center"
-            onClick={() => setAttachMenuOpen((v) => !v)}
-            disabled={terminated || attaching}
-            title="Attach a file"
-          >
-            <LuPaperclip className="size-4" />
-          </button>
-          {attachMenuOpen && (
-            <div className="absolute bottom-full left-0 mb-2 w-56 rounded-xl border border-neutral-200 bg-white shadow-card p-1.5 z-10">
-              <button
-                className="w-full text-left px-3 py-2 rounded-lg hover:bg-neutral-100 flex items-center gap-2 text-sm"
-                onClick={() => {
-                  setAttachMenuOpen(false);
-                  setKbPickerOpen(true);
-                }}
-              >
-                <LuPaperclip className="size-4 text-violet-500" />
-                Attach from knowledge base
-              </button>
-              <button
-                className="w-full text-left px-3 py-2 rounded-lg hover:bg-neutral-100 flex items-center gap-2 text-sm"
-                onClick={() => uploadInputRef.current?.click()}
-              >
-                <LuUpload className="size-4 text-sky-500" />
-                Upload from computer
-              </button>
-            </div>
-          )}
-          <input
-            ref={uploadInputRef}
-            type="file"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void uploadAndAttach(file);
-            }}
-          />
-        </div>
+      <div className="border-t border-border px-4 py-3 flex gap-2 bg-background">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={terminated || attaching}
+              title="Attach a file"
+            >
+              <LuPaperclip className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start">
+            <DropdownMenuItem onClick={() => setKbPickerOpen(true)}>
+              <LuPaperclip className="size-4" />
+              Attach from knowledge base
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => uploadInputRef.current?.click()}>
+              <LuUpload className="size-4" />
+              Upload from computer
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <input
-          className="input"
+          ref={uploadInputRef}
+          type="file"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void uploadAndAttach(file);
+          }}
+        />
+        <Input
           placeholder={terminated ? "This chat ended." : "Message your agent…"}
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           disabled={terminated || sending}
+          className="flex-1"
         />
-        <button
-          className="btn-primary"
+        <Button
           onClick={send}
           disabled={!message.trim() || terminated || sending}
+          size="sm"
         >
           <LuSend className="size-3.5" /> Send
-        </button>
+        </Button>
       </div>
       </div>
       {filesOpen && (
@@ -454,6 +455,7 @@ function ChatSurface({ sessionId }: { sessionId: string }) {
           attached={attached}
           previewing={previewing}
           setPreviewing={setPreviewing}
+          onUpload={uploadAndAttach}
         />
       )}
       <AttachKbModal
@@ -586,21 +588,34 @@ function iconFor(name: string | null | undefined, mime?: string | null): IconTyp
 }
 
 function FilesPanel({
-  sessionId, outputs, attached, previewing, setPreviewing,
+  sessionId, outputs, attached, previewing, setPreviewing, onUpload,
 }: {
   sessionId: string;
   outputs: RunOutput[];
   attached: AttachedFile[];
   previewing: RunOutput | null;
   setPreviewing: (o: RunOutput | null) => void;
+  onUpload: (file: File) => Promise<void>;
 }) {
   const empty = outputs.length === 0 && attached.length === 0;
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   return (
-    <aside className="w-72 shrink-0 border-l border-neutral-200 bg-white flex flex-col overflow-hidden">
-      <div className="px-4 py-3 border-b border-neutral-200">
-        <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">Files</div>
-        <div className="text-[11px] text-ink-500">
+    <aside className="w-72 shrink-0 border-l border-border bg-background flex flex-col overflow-hidden">
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void onUpload(file);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+        }}
+      />
+
+      <div className="px-4 py-3 border-b border-border">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Files</div>
+        <div className="text-[11px] text-muted-foreground">
           {empty ? "None yet" : `${outputs.length + attached.length} in this chat`}
         </div>
       </div>
@@ -641,9 +656,28 @@ function FilesPanel({
           </Section>
         )}
         {empty && (
-          <div className="text-xs text-ink-500 px-2 py-4">
-            Nothing attached or produced yet. Anything you add to the chat, plus any generated files, will show up here.
-          </div>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex flex-col items-center justify-center gap-3 py-10 text-center px-3 w-full rounded-xl hover:bg-muted/50 transition-colors group"
+          >
+            <div className="size-11 rounded-2xl border-2 border-dashed border-border group-hover:border-foreground/30 flex items-center justify-center text-muted-foreground/40 group-hover:text-foreground/50 transition-colors">
+              <LuUpload className="size-4" />
+            </div>
+            <div>
+              <div className="text-xs font-medium text-foreground/70">Drop anywhere or click to attach</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">uploads to knowledge base and attaches here</div>
+            </div>
+          </button>
+        )}
+        {!empty && (
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full flex items-center justify-center gap-1.5 py-2 text-[11px] text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted/50"
+          >
+            <LuUpload className="size-3" /> Add file
+          </button>
         )}
       </div>
       {previewing && (
@@ -680,8 +714,8 @@ function FileRow({
   rightIcon?: IconType;
 }) {
   const cls = tint === "violet"
-    ? "bg-violet-50 text-violet-500"
-    : "bg-amber-50 text-amber-500";
+    ? "bg-neutral-900 text-white"
+    : "bg-neutral-900 text-white";
   return (
     <div className="group flex items-start gap-1 px-2 py-2 rounded-lg hover:bg-neutral-100">
       <button
@@ -739,85 +773,227 @@ async function downloadOutput(sessionId: string, output: RunOutput): Promise<voi
   }
 }
 
-function NewChatModal({ open, defaultAgentId, onClose }: { open: boolean; defaultAgentId?: string; onClose: () => void }) {
+function NewChatComposer({ initialAgentId }: { initialAgentId?: string }) {
   const nav = useNavigate();
-  const { data: agents } = useApi<{ data: Agent[] }>(open ? "/agents" : null);
-  const { data: envs } = useApi<{ data: Environment[] }>(open ? "/environments" : null);
+  const { data: agentsData } = useApi<{ data: Agent[] }>("/agents");
+  const { data: envsData } = useApi<{ data: Environment[] }>("/environments");
   const [agentId, setAgentId] = useState("");
   const [message, setMessage] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [queuedFiles, setQueuedFiles] = useState<KbFile[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [dropTarget, setDropTarget] = useState(false);
+  const dragCounter = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-select first env (hidden from UI)
-  const envId = envs?.data?.[0]?.id ?? "";
+  const agents = agentsData?.data ?? [];
+  const envId = envsData?.data?.[0]?.id ?? "";
 
-  // Pre-fill from roster nav state
   useEffect(() => {
-    if (defaultAgentId) setAgentId(defaultAgentId);
-  }, [defaultAgentId]);
+    const prevent = (e: DragEvent) => e.preventDefault();
+    window.addEventListener("dragover", prevent);
+    window.addEventListener("drop", prevent);
+    return () => {
+      window.removeEventListener("dragover", prevent);
+      window.removeEventListener("drop", prevent);
+    };
+  }, []);
 
-  // Default to first agent when list loads and nothing pre-selected
   useEffect(() => {
-    if (!agentId && agents?.data?.length) setAgentId(agents.data[0].id);
-  }, [agents?.data, agentId]);
+    if (!agents.length || agentId) return;
+    if (initialAgentId && agents.find(a => a.id === initialAgentId)) {
+      setAgentId(initialAgentId);
+      return;
+    }
+    const librarian = agents.find(a => a.name.toLowerCase().includes("librarian"));
+    setAgentId(librarian?.id ?? agents[0].id);
+  }, [agents, initialAgentId, agentId]);
 
-  const selectedAgent = agents?.data?.find(a => a.id === agentId);
+  const selectedAgent = agents.find(a => a.id === agentId);
+  const modelShort = (selectedAgent?.model ?? "").replace("claude-", "").replace(/-\d{8,}/, "");
+
+  async function uploadFile(file: File) {
+    setUploading(true);
+    try {
+      const kbFile = await uploadKbFile(file);
+      setQueuedFiles(prev => [...prev, kbFile]);
+      refresh("/kb/files");
+    } catch (e) {
+      alert(`Upload failed: ${(e as Error).message}`);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function start() {
+    if (!agentId || !envId || !message.trim() || busy) return;
+    setBusy(true);
+    try {
+      const created = await api.post<Session>("/sessions", {
+        agent_id: agentId,
+        environment_id: envId,
+        initial_message: message,
+      });
+      // Attach any queued files to the new session
+      for (const f of queuedFiles) {
+        try {
+          await api.post(`/sessions/${created.id}/attachments/kb`, { kb_file_id: f.id });
+        } catch { /* non-fatal */ }
+      }
+      refresh("/sessions");
+      nav(`/chat/${created.id}`, { replace: true });
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  }
 
   return (
-    <Modal
-      open={open} onClose={onClose} title="New chat"
-      footer={
-        <div className="flex justify-end gap-2">
-          <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button
-            className="btn-primary" disabled={!agentId || !envId || busy}
-            onClick={async () => {
-              setBusy(true); setErr(null);
-              try {
-                const created = await api.post<Session>("/sessions", {
-                  agent_id: agentId, environment_id: envId,
-                  initial_message: message || undefined,
-                });
-                refresh("/sessions");
-                onClose();
-                setMessage(""); setAgentId("");
-                nav(`/chat/${created.id}`);
-              } catch (e) { setErr((e as Error).message); }
-              finally { setBusy(false); }
-            }}
-          >
-            Start
-          </button>
-        </div>
-      }
+    <div
+      className="h-full flex relative"
+      onDragEnter={(e) => { e.preventDefault(); dragCounter.current++; if (dragCounter.current === 1) setDropTarget(true); }}
+      onDragLeave={(e) => { e.preventDefault(); dragCounter.current--; if (dragCounter.current === 0) setDropTarget(false); }}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
+      onDrop={(e) => { e.preventDefault(); dragCounter.current = 0; setDropTarget(false); const f = e.dataTransfer.files?.[0]; if (f) void uploadFile(f); }}
     >
-      <div className="space-y-3">
-        <div>
-          <label className="label block mb-1">Agent</label>
-          <select className="input" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
-            {(agents?.data ?? []).map((a) => (
-              <option key={a.id} value={a.id}>{a.name} · {a.model}</option>
-            ))}
-          </select>
-          {selectedAgent && (
-            <p className="text-xs text-ink-400 mt-1">{selectedAgent.system_prompt?.slice(0, 100)}{(selectedAgent.system_prompt?.length ?? 0) > 100 ? "…" : ""}</p>
+      {dropTarget && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/80 border-2 border-dashed border-primary pointer-events-none">
+          <LuUpload className="size-8 text-primary" />
+          <span className="text-base font-medium text-primary">Drop to attach file</span>
+        </div>
+      )}
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void uploadFile(file);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+        }}
+      />
+
+      {/* Composer area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6">
+          <button
+            type="button"
+            onClick={() => setPickerOpen(o => !o)}
+            className="flex flex-col items-center gap-3 focus:outline-none group cursor-pointer"
+          >
+            <div style={{ padding: pickerOpen ? "3px" : "0", background: pickerOpen ? "var(--primary)" : "transparent", borderRadius: "50%", transition: "all 0.15s" }}
+              className="transition-transform group-hover:scale-105 group-active:scale-95"
+            >
+              <OrbAvatar seed={agentId || "new"} size={104} />
+            </div>
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-1.5">
+                <span className="font-semibold text-base leading-tight group-hover:underline underline-offset-2">
+                  {selectedAgent?.name ?? "…"}
+                </span>
+                <LuChevronDown className={`size-3.5 text-muted-foreground transition-transform ${pickerOpen ? "rotate-180" : ""}`} />
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">{modelShort || "—"}</div>
+            </div>
+          </button>
+
+          {pickerOpen && (
+            <div className="w-full max-w-md bg-background border border-border rounded-2xl shadow-lg overflow-hidden mt-1">
+              <div className="p-3 grid grid-cols-2 gap-2">
+                {agents.map(a => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => { setAgentId(a.id); setPickerOpen(false); inputRef.current?.focus(); }}
+                    className={[
+                      "flex items-center gap-2.5 rounded-xl px-3 py-2.5 border text-left transition-all",
+                      agentId === a.id
+                        ? "border-foreground/30 bg-muted font-medium"
+                        : "border-transparent hover:bg-muted/60",
+                    ].join(" ")}
+                  >
+                    <OrbAvatar seed={a.id} size={30} />
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate leading-tight">{a.name}</div>
+                      <div className="text-[10px] text-muted-foreground truncate">
+                        {a.model.replace("claude-", "").replace(/-\d{8,}/, "")}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </div>
-        <div>
-          <label className="label block mb-1">First message</label>
-          <textarea
-            className="input"
-            rows={3}
-            placeholder="What do you want help with?"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-          />
+
+        {/* Message bar */}
+        <div className="border-t border-border px-4 py-3 bg-background">
+          <div className="flex gap-2">
+            <Input
+              ref={inputRef}
+              placeholder={selectedAgent ? `Message ${selectedAgent.name}…` : "Message your agent…"}
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); start(); } }}
+              disabled={busy}
+              className="flex-1"
+              autoFocus
+            />
+            <Button onClick={start} disabled={!message.trim() || !agentId || !envId || busy} size="sm">
+              <LuSend className="size-3.5" />{busy ? "Starting…" : "Send"}
+            </Button>
+          </div>
+          {err && <div className="text-rose-600 text-xs mt-1">{err}</div>}
         </div>
-        {err && <div className="text-rose-600 text-sm">{err}</div>}
       </div>
-    </Modal>
+
+      {/* Files panel */}
+      <aside className="w-72 shrink-0 border-l border-border bg-background flex flex-col overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Files</div>
+          <div className="text-[11px] text-muted-foreground">
+            {uploading ? "Uploading…" : queuedFiles.length === 0 ? "None yet" : `${queuedFiles.length} queued`}
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {queuedFiles.map(f => (
+            <div key={f.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/40">
+              <LuFile className="size-3.5 text-violet-500 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium truncate">{f.name}</div>
+                <div className="text-[10px] text-muted-foreground truncate">{f.mime} · will attach on send</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQueuedFiles(prev => prev.filter(q => q.id !== f.id))}
+                className="text-muted-foreground hover:text-foreground transition-colors text-xs px-1"
+              >✕</button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex flex-col items-center justify-center gap-3 py-10 text-center px-3 w-full rounded-xl hover:bg-muted/50 transition-colors group"
+          >
+            <div className="size-11 rounded-2xl border-2 border-dashed border-border group-hover:border-foreground/30 flex items-center justify-center text-muted-foreground/40 group-hover:text-foreground/50 transition-colors">
+              <LuUpload className="size-4" />
+            </div>
+            <div>
+              <div className="text-xs font-medium text-foreground/70">Drop anywhere or click to attach</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">attached when you send your first message</div>
+            </div>
+          </button>
+        </div>
+      </aside>
+    </div>
   );
 }
+
+
 
 function AttachKbModal({
   open,
@@ -856,9 +1032,9 @@ function AttachKbModal({
     >
       <div className="space-y-3">
         <div className="relative">
-          <LuSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-ink-300" />
-          <input
-            className="input pl-9"
+          <LuSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input
+            className="pl-9"
             placeholder="Search files by name or snippet…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}

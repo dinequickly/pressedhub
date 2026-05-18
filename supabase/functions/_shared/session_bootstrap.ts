@@ -9,6 +9,7 @@
 import {
   AnthropicSessionEvents,
   AnthropicSessions,
+  type SessionResource,
   type UserEvent,
 } from "./anthropic.ts";
 import { syncAgentBuiltins } from "./agent_config.ts";
@@ -35,10 +36,14 @@ export async function bootstrapSession(
   sc: SupabaseClient,
   input: BootstrapInput,
 ): Promise<{ localId: string; anthropicId: string }> {
-  await syncAgentBuiltins(sc, input.agentId);
+  try {
+    await syncAgentBuiltins(sc, input.agentId);
+  } catch (err) {
+    console.warn("[bootstrapSession] syncAgentBuiltins failed (non-fatal):", (err as Error).message);
+  }
 
   const { data: agent } = await sc
-    .from("agents").select("anthropic_id").eq("id", input.agentId).maybeSingle();
+    .from("agents").select("anthropic_id,default_resources").eq("id", input.agentId).maybeSingle();
   if (!agent?.anthropic_id) throw new Error("agent has no anthropic_id");
 
   let envId = input.environmentId;
@@ -57,10 +62,40 @@ export async function bootstrapSession(
     .from("environments").select("anthropic_id").eq("id", envId).maybeSingle();
   if (!env?.anthropic_id) throw new Error("environment has no anthropic_id");
 
+  // Auto-attach the agent's default memory stores so triggered sessions
+  // have the same persistent workspace as user-initiated sessions.
+  const defaultMemoryIds: string[] = (agent as any)?.default_resources?.memory_store_ids ?? [];
+  const resources: SessionResource[] = [];
+  if (defaultMemoryIds.length) {
+    const { data: stores } = await sc
+      .from("memory_stores")
+      .select("anthropic_id,name,description")
+      .in("id", defaultMemoryIds);
+    for (const s of stores ?? []) {
+      if (!s.anthropic_id) continue;
+      resources.push({
+        type: "memory_store",
+        memory_store_id: s.anthropic_id as string,
+        access: "read_write",
+        instructions: `This is your persistent memory store: "${s.name}".
+
+IMPORTANT: At the end of every session, write key findings, decisions, and produced artifacts here using your file write tools. Do NOT write to /tmp/ — those files are lost when the session ends.
+
+Write to paths like:
+  /findings/YYYY-MM-DD_topic.md   — research output, analysis results
+  /context/ongoing.md             — running context, open questions, next steps
+  /artifacts/YYYY-MM-DD_name.ext  — any files you produced that should persist
+
+At the START of each session, read your prior entries here to build on past work rather than starting cold.`.slice(0, 4096),
+      });
+    }
+  }
+
   const created = await AnthropicSessions.create({
     agent: agent.anthropic_id as string,
     environment_id: env.anthropic_id as string,
     title: input.title,
+    resources: resources.length ? resources : undefined,
   });
 
   const { data: localSession, error } = await sc.from("sessions").insert({

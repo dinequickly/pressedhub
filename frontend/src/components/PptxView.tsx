@@ -22,7 +22,7 @@ export function PptxView({
   rightActions,
 }: {
   proxyPath: string;
-  // Optional trailing slot on the header bar (eg. a Download button).
+  // Optional trailing slot (eg. a Download button). Rendered floating top-right.
   rightActions?: ReactNode;
 }) {
   const [slides, setSlides] = useState<PptxSlide[] | null>(null);

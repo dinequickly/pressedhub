@@ -11,7 +11,7 @@ import { Router, readJson } from "../_shared/router.ts";
 import { requireUser } from "../_shared/auth.ts";
 import { BadRequest, NotFound, noContent, ok, Upstream } from "../_shared/errors.ts";
 import { AgentCreateSchema, AgentUpdateSchema } from "../_shared/schemas.ts";
-import { AnthropicAgents, DEFAULT_THINKING_CONFIG } from "../_shared/anthropic.ts";
+import { AnthropicAgents, AnthropicMemoryStores } from "../_shared/anthropic.ts";
 import { skillsForAnthropic, withBuiltinTools } from "../_shared/agent_config.ts";
 import { writeAudit } from "../_shared/audit.ts";
 
@@ -52,7 +52,6 @@ router.post("/", async (req) => {
       name: parsed.name,
       model: parsed.model,
       system: parsed.system_prompt,
-      thinking: DEFAULT_THINKING_CONFIG,
       tools: withBuiltinTools(
         parsed.tools.length
           ? (parsed.tools as Record<string, unknown>[])
@@ -67,6 +66,36 @@ router.post("/", async (req) => {
     throw new Upstream(`Anthropic agents.create failed: ${(err as Error).message}`);
   }
 
+  // If the caller opted in to persistent memory, provision a private Anthropic
+  // memory store and pin it to the agent's default_resources so every session
+  // gets it mounted at /mnt/memory/ automatically.
+  const defaultResources = parsed.default_resources ?? { kb_file_ids: [], memory_store_ids: [], pinned_kb_names: [] };
+  if (parsed.auto_memory && !defaultResources.memory_store_ids?.length) {
+    try {
+      const anthropicStore = await AnthropicMemoryStores.create({
+        display_name: `${parsed.name} Memory`,
+        description: `Private working memory for the ${parsed.name} agent.`,
+      });
+      const { data: storeRow } = await user.db
+        .from("memory_stores")
+        .insert({
+          name: `${parsed.name} Memory`,
+          description: `Private working memory for the ${parsed.name} agent.`,
+          scope: "agent",
+          owner_id: user.id,
+          anthropic_id: anthropicStore.id,
+        })
+        .select("id")
+        .single();
+      if (storeRow) {
+        defaultResources.memory_store_ids = [storeRow.id as string];
+      }
+    } catch (err) {
+      console.warn("[agents] auto-create memory store failed (non-fatal):", (err as Error).message);
+    }
+  }
+
+  // auto_memory is a transient flag — don't persist it to the agents table.
   const { data: row, error } = await user.db
     .from("agents")
     .insert({
@@ -84,7 +113,7 @@ router.post("/", async (req) => {
       mcp_servers: parsed.mcp_servers,
       outcome: parsed.outcome ?? null,
       brain: parsed.brain,
-      default_resources: parsed.default_resources ?? { kb_file_ids: [], memory_store_ids: [] },
+      default_resources: defaultResources,
       created_by: user.id,
     })
     .select()
@@ -120,7 +149,6 @@ router.patch("/:id", async (req, params) => {
       if (parsed.system_prompt !== undefined) updateInput.system = parsed.system_prompt;
       if (parsed.model !== undefined) updateInput.model = parsed.model;
       if (parsed.name !== undefined) updateInput.name = parsed.name;
-      updateInput.thinking = DEFAULT_THINKING_CONFIG;
       // Always re-sync the toolset so existing agents pick up new built-in
       // tools (kb_*). Caller-provided tools take precedence; otherwise we
       // round-trip whatever the local row already had.
@@ -142,8 +170,49 @@ router.patch("/:id", async (req, params) => {
     }
   }
 
+  // If the caller is enabling memory and the agent doesn't have a store yet,
+  // provision one now — same logic as agent creation.
+  const existingDefaultResources = (existing.default_resources as Record<string, unknown> | null) ?? {};
+  const existingStoreIds = (existingDefaultResources.memory_store_ids as string[] | null) ?? [];
+  if (parsed.auto_memory && !existingStoreIds.length) {
+    const incomingIds = (parsed.default_resources?.memory_store_ids ?? []);
+    if (!incomingIds.length) {
+      try {
+        const agentName = (parsed.name as string | undefined) ?? (existing.name as string);
+        const anthropicStore = await AnthropicMemoryStores.create({
+          display_name: `${agentName} Memory`,
+          description: `Private working memory for the ${agentName} agent.`,
+        });
+        const { data: storeRow } = await user.db
+          .from("memory_stores")
+          .insert({
+            name: `${agentName} Memory`,
+            description: `Private working memory for the ${agentName} agent.`,
+            scope: "agent",
+            owner_id: user.id,
+            anthropic_id: anthropicStore.id,
+          })
+          .select("id")
+          .single();
+        if (storeRow) {
+          const dr = parsed.default_resources ?? {
+            kb_file_ids: existingDefaultResources.kb_file_ids ?? [],
+            pinned_kb_names: existingDefaultResources.pinned_kb_names ?? [],
+            memory_store_ids: [],
+          };
+          (dr as Record<string, unknown>).memory_store_ids = [storeRow.id as string];
+          parsed.default_resources = dr as typeof parsed.default_resources;
+        }
+      } catch (err) {
+        console.warn("[agents] PATCH auto-create memory store failed (non-fatal):", (err as Error).message);
+      }
+    }
+  }
+
   const update: Record<string, unknown> = { anthropic_version: existing.anthropic_version };
   for (const k of Object.keys(parsed) as Array<keyof typeof parsed>) {
+    // auto_memory is a transient flag — don't persist it to the agents table.
+    if (k === "auto_memory") continue;
     update[k] = parsed[k] as unknown;
   }
   const { data: row, error } = await user.db

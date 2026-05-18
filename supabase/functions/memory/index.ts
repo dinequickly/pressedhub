@@ -26,7 +26,7 @@ import {
   MemoryStoreCreateSchema,
   MemoryStoreUpdateSchema,
 } from "../_shared/schemas.ts";
-import { AnthropicMemoryStores } from "../_shared/anthropic.ts";
+import { AnthropicMemories, AnthropicMemoryStores } from "../_shared/anthropic.ts";
 import { ENV } from "../_shared/env.ts";
 
 const router = new Router("memory");
@@ -151,6 +151,71 @@ router.get("/stores/:id/tables", async (req, params) => {
     .order("name");
   if (error) throw new Error(error.message);
   return ok({ data });
+});
+
+// ---- Memories (Anthropic-side documents within a store) ----------------
+// These proxy directly to Anthropic's memories API and let you pre-populate
+// or inspect the files an agent will see under /mnt/memory/.
+
+router.get("/stores/:id/memories", async (req, params) => {
+  const user = await requireUser(req);
+  const { data: store } = await user.db.from("memory_stores").select("anthropic_id").eq(
+    "id", params.id,
+  ).maybeSingle();
+  if (!store?.anthropic_id) throw new NotFound("Memory store not found or not synced to Anthropic");
+  const url = new URL(req.url);
+  const list = await AnthropicMemories.list(store.anthropic_id as string, {
+    path_prefix: url.searchParams.get("path_prefix") ?? undefined,
+    limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+    page: url.searchParams.get("page") ?? undefined,
+  });
+  return ok(list);
+});
+
+router.post("/stores/:id/memories", async (req, params) => {
+  const user = await requireUser(req);
+  const { data: store } = await user.db.from("memory_stores").select("anthropic_id").eq(
+    "id", params.id,
+  ).maybeSingle();
+  if (!store?.anthropic_id) throw new NotFound("Memory store not found or not synced to Anthropic");
+  const body = await readJson<{ path: string; content: string }>(req);
+  if (!body.path || body.content === undefined) throw new BadRequest("path and content are required");
+  const memory = await AnthropicMemories.create(store.anthropic_id as string, {
+    path: body.path,
+    content: body.content,
+  });
+  return ok(memory, 201);
+});
+
+router.get("/stores/:id/memories/:memId", async (req, params) => {
+  const user = await requireUser(req);
+  const { data: store } = await user.db.from("memory_stores").select("anthropic_id").eq(
+    "id", params.id,
+  ).maybeSingle();
+  if (!store?.anthropic_id) throw new NotFound("Memory store not found or not synced to Anthropic");
+  const memory = await AnthropicMemories.retrieve(store.anthropic_id as string, params.memId);
+  return ok(memory);
+});
+
+router.patch("/stores/:id/memories/:memId", async (req, params) => {
+  const user = await requireUser(req);
+  const { data: store } = await user.db.from("memory_stores").select("anthropic_id").eq(
+    "id", params.id,
+  ).maybeSingle();
+  if (!store?.anthropic_id) throw new NotFound("Memory store not found or not synced to Anthropic");
+  const body = await readJson<{ path?: string; content?: string; precondition?: { type: "content_sha256"; content_sha256: string } }>(req);
+  const memory = await AnthropicMemories.update(store.anthropic_id as string, params.memId, body);
+  return ok(memory);
+});
+
+router.delete("/stores/:id/memories/:memId", async (req, params) => {
+  const user = await requireUser(req);
+  const { data: store } = await user.db.from("memory_stores").select("anthropic_id").eq(
+    "id", params.id,
+  ).maybeSingle();
+  if (!store?.anthropic_id) throw new NotFound("Memory store not found or not synced to Anthropic");
+  await AnthropicMemories.delete(store.anthropic_id as string, params.memId);
+  return noContent();
 });
 
 router.get("/stores/:id/dreams", async (req, params) => {

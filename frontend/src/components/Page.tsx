@@ -1,6 +1,13 @@
-// Shared page chrome: header with title + action slot, scrollable content area.
-
 import type { ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 export function Page({
   title, subtitle, actions, children,
@@ -11,13 +18,13 @@ export function Page({
   children: ReactNode;
 }) {
   return (
-    <div className="h-full flex flex-col bg-white">
-      <div className="px-6 pt-6 pb-5 border-b border-neutral-100 bg-white flex items-start justify-between gap-4">
+    <div className="h-full flex flex-col bg-background">
+      <div className="px-6 pt-5 pb-4 border-b border-border flex items-start justify-between gap-4">
         <div className="min-w-0">
           {typeof title === "string"
-            ? <h1 className="text-[1.45rem] font-semibold tracking-tight text-ink-950">{title}</h1>
-            : <div className="text-[1.45rem] font-semibold tracking-tight text-ink-950">{title}</div>}
-          {subtitle && <p className="text-sm text-ink-500 mt-1 max-w-2xl leading-relaxed">{subtitle}</p>}
+            ? <h1 className="text-[1.35rem] font-semibold tracking-tight">{title}</h1>
+            : <div className="text-[1.35rem] font-semibold tracking-tight">{title}</div>}
+          {subtitle && <p className="text-sm text-muted-foreground mt-0.5 max-w-2xl leading-relaxed">{subtitle}</p>}
         </div>
         {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
       </div>
@@ -31,70 +38,82 @@ export function EmptyState({
 }: { title: string; body?: string; action?: ReactNode }) {
   return (
     <div className="p-10 text-center">
-      <div className="mx-auto size-10 rounded-xl bg-neutral-100 text-neutral-500 grid place-items-center mb-3">
+      <div className="mx-auto size-10 rounded-xl bg-muted text-muted-foreground grid place-items-center mb-3 text-lg">
         ○
       </div>
-      <div className="font-medium text-ink-900">{title}</div>
-      {body && <div className="text-sm text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">{body}</div>}
+      <div className="font-medium">{title}</div>
+      {body && <div className="text-sm text-muted-foreground mt-1 max-w-md mx-auto leading-relaxed">{body}</div>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }
 
+const STATUS_CLASS: Record<string, string> = {
+  connected:    "bg-emerald-50 text-emerald-700 border-emerald-200",
+  expired:      "bg-amber-50 text-amber-700 border-amber-200",
+  idle:         "bg-secondary text-secondary-foreground border-transparent",
+  running:      "bg-sky-50 text-sky-700 border-sky-200",
+  rescheduling: "bg-amber-50 text-amber-700 border-amber-200",
+  terminated:   "bg-rose-50 text-rose-700 border-rose-200",
+  completed:    "bg-emerald-50 text-emerald-700 border-emerald-200",
+  pending:      "bg-amber-50 text-amber-700 border-amber-200",
+  approved:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+  rejected:     "bg-rose-50 text-rose-700 border-rose-200",
+  failed:       "bg-rose-50 text-rose-700 border-rose-200",
+  canceled:     "bg-secondary text-secondary-foreground border-transparent",
+  deployed:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+  draft:        "bg-secondary text-secondary-foreground border-transparent",
+  uploaded:     "bg-secondary text-secondary-foreground border-transparent",
+  extracted:    "bg-violet-50 text-violet-700 border-violet-200",
+  chunked:      "bg-sky-50 text-sky-700 border-sky-200",
+  embedded:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+  never:        "bg-secondary text-secondary-foreground border-transparent",
+};
+
 export function StatusPill({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    connected: "bg-emerald-50 text-emerald-600",
-    expired: "bg-amber-50 text-amber-600",
-    never: "bg-neutral-100 text-ink-500",
-    idle: "bg-neutral-100 text-ink-500",
-    running: "bg-sky-50 text-sky-600",
-    rescheduling: "bg-amber-50 text-amber-600",
-    terminated: "bg-rose-50 text-rose-600",
-    completed: "bg-emerald-50 text-emerald-600",
-    pending: "bg-amber-50 text-amber-600",
-    approved: "bg-emerald-50 text-emerald-600",
-    rejected: "bg-rose-50 text-rose-600",
-    failed: "bg-rose-50 text-rose-600",
-    canceled: "bg-neutral-100 text-ink-500",
-    deployed: "bg-emerald-50 text-emerald-600",
-    draft: "bg-neutral-100 text-ink-500",
-    uploaded: "bg-neutral-100 text-ink-500",
-    extracted: "bg-violet-50 text-violet-600",
-    chunked: "bg-sky-50 text-sky-600",
-    embedded: "bg-emerald-50 text-emerald-600",
-  };
-  const cls = map[status] ?? "bg-neutral-100 text-ink-500";
+  const cls = STATUS_CLASS[status] ?? "bg-secondary text-secondary-foreground border-transparent";
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium uppercase tracking-wide ${cls}`}>
+    <Badge
+      variant="outline"
+      className={cn("text-[11px] uppercase tracking-wide font-medium", cls)}
+    >
       {status}
-    </span>
+    </Badge>
   );
 }
 
 export function Modal({
-  open, onClose, title, children, footer,
+  open, onClose, title, children, footer, containerClassName,
 }: {
   open: boolean;
   onClose: () => void;
   title?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
+  containerClassName?: string;
 }) {
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-30 grid place-items-center p-4 bg-ink-900/30" onClick={onClose}>
-      <div
-        className="bg-white rounded-2xl shadow-card border border-neutral-200 w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col"
-        onClick={(e) => e.stopPropagation()}
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        className={cn(
+          "max-h-[85vh] overflow-hidden flex flex-col p-0 gap-0",
+          containerClassName ?? "max-w-2xl",
+        )}
       >
         {title && (
-          <div className="px-5 py-4 border-b border-neutral-200">
-            {typeof title === "string" ? <h2 className="text-base font-semibold">{title}</h2> : title}
-          </div>
+          <DialogHeader className="px-5 py-4 border-b border-border shrink-0">
+            {typeof title === "string"
+              ? <DialogTitle>{title}</DialogTitle>
+              : <div>{title}</div>}
+          </DialogHeader>
         )}
-        <div className="overflow-y-auto p-5">{children}</div>
-        {footer && <div className="px-5 py-3 border-t border-neutral-200 bg-neutral-50">{footer}</div>}
-      </div>
-    </div>
+        <div className="overflow-y-auto p-5 flex-1">{children}</div>
+        {footer && (
+          <DialogFooter className="px-5 py-3 border-t border-border bg-muted/50 shrink-0 flex items-center">
+            {footer}
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

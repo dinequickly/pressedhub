@@ -1,4 +1,5 @@
 import { api, type KbFile } from "./api";
+import { supabase } from "./supabase";
 
 export async function uploadKbFile(file: File, folderId?: string | null): Promise<KbFile> {
   const signed = await api.post<{
@@ -12,12 +13,13 @@ export async function uploadKbFile(file: File, folderId?: string | null): Promis
     mime: file.type || "application/octet-stream",
     size_bytes: file.size,
   });
-  const put = await fetch(signed.signed_url, {
-    method: "PUT",
-    headers: { "Content-Type": file.type || "application/octet-stream" },
-    body: file,
-  });
-  if (!put.ok) throw new Error(`Upload failed: ${put.status}`);
+
+  const { error: uploadErr } = await supabase.storage
+    .from("kb")
+    .uploadToSignedUrl(signed.path, signed.token, file, {
+      contentType: file.type || "application/octet-stream",
+    });
+  if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`);
 
   await api.post(`/kb/files/${signed.file.id}/extract`);
   await api.post(`/kb/files/${signed.file.id}/chunk`);

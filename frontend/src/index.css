@@ -1,3 +1,4 @@
+@import "@fontsource-variable/inter";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -7,38 +8,104 @@
   body {
     font-feature-settings: "cv11", "ss01", "ss03";
     letter-spacing: -0.01em;
-    @apply bg-white text-ink-900 antialiased;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+  .theme { --font-heading: var(--font-sans); --font-sans: 'Inter Variable', sans-serif;
+  }
+  :root { --background: oklch(1 0 0); --foreground: oklch(0.145 0 0); --card: oklch(1 0 0); --card-foreground: oklch(0.145 0 0); --popover: oklch(1 0 0); --popover-foreground: oklch(0.145 0 0); --primary: oklch(0.205 0 0); --primary-foreground: oklch(0.985 0 0); --secondary: oklch(0.97 0 0); --secondary-foreground: oklch(0.205 0 0); --muted: oklch(0.97 0 0); --muted-foreground: oklch(0.556 0 0); --accent: oklch(0.97 0 0); --accent-foreground: oklch(0.205 0 0); --destructive: oklch(0.577 0.245 27.325); --border: oklch(0.922 0 0); --input: oklch(0.922 0 0); --ring: oklch(0.708 0 0); --chart-1: oklch(0.809 0.105 251.813); --chart-2: oklch(0.623 0.214 259.815); --chart-3: oklch(0.546 0.245 262.881); --chart-4: oklch(0.488 0.243 264.376); --chart-5: oklch(0.424 0.199 265.638); --radius: 0.625rem; --sidebar: oklch(0.985 0 0); --sidebar-foreground: oklch(0.145 0 0); --sidebar-primary: oklch(0.205 0 0); --sidebar-primary-foreground: oklch(0.985 0 0); --sidebar-accent: oklch(0.97 0 0); --sidebar-accent-foreground: oklch(0.205 0 0); --sidebar-border: oklch(0.922 0 0); --sidebar-ring: oklch(0.708 0 0);
+  }
+  .dark { --background: oklch(0.145 0 0); --foreground: oklch(0.985 0 0); --card: oklch(0.205 0 0); --card-foreground: oklch(0.985 0 0); --popover: oklch(0.205 0 0); --popover-foreground: oklch(0.985 0 0); --primary: oklch(0.922 0 0); --primary-foreground: oklch(0.205 0 0); --secondary: oklch(0.269 0 0); --secondary-foreground: oklch(0.985 0 0); --muted: oklch(0.269 0 0); --muted-foreground: oklch(0.708 0 0); --accent: oklch(0.269 0 0); --accent-foreground: oklch(0.985 0 0); --destructive: oklch(0.704 0.191 22.216); --border: oklch(1 0 0 / 10%); --input: oklch(1 0 0 / 15%); --ring: oklch(0.556 0 0); --chart-1: oklch(0.809 0.105 251.813); --chart-2: oklch(0.623 0.214 259.815); --chart-3: oklch(0.546 0.245 262.881); --chart-4: oklch(0.488 0.243 264.376); --chart-5: oklch(0.424 0.199 265.638); --sidebar: oklch(0.205 0 0); --sidebar-foreground: oklch(0.985 0 0); --sidebar-primary: oklch(0.488 0.243 264.376); --sidebar-primary-foreground: oklch(0.985 0 0); --sidebar-accent: oklch(0.269 0 0); --sidebar-accent-foreground: oklch(0.985 0 0); --sidebar-border: oklch(1 0 0 / 10%); --sidebar-ring: oklch(0.556 0 0);
+  }
+  * {
+    border-color: var(--border);
+  }
+  html {
+    font-family: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, sans-serif;
   }
 }
 
-@layer components {
-  .card {
-    @apply bg-white/90 backdrop-blur border border-neutral-200/90 rounded-2xl shadow-[0_16px_40px_rgba(15,23,42,0.06)];
-  }
-  .pill {
-    @apply inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-ink-500;
-  }
-  .btn {
-    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium transition-all duration-200;
-  }
-  .btn-primary {
-    @apply btn bg-neutral-900 text-white shadow-[0_2px_8px_rgba(0,0,0,0.10)] hover:bg-neutral-700;
-  }
-  .btn-ghost {
-    @apply btn text-ink-700 hover:bg-white hover:shadow-soft;
-  }
-  .btn-danger {
-    @apply btn bg-rose-50 text-rose-600 hover:bg-rose-100;
-  }
-  .input {
-    @apply w-full px-3 py-2 rounded-xl border border-neutral-200 bg-white/95 text-sm placeholder:text-ink-300 focus:outline-none focus:border-neutral-400 focus:ring-4 focus:ring-black/5;
-  }
-  .label {
-    @apply text-xs font-medium text-ink-500 uppercase tracking-wide;
-  }
-  .section-heading {
-    @apply text-[11px] font-medium text-ink-500 uppercase tracking-wider px-3 pt-4 pb-1;
-  }
+/* Legacy utility aliases — map to shadcn CSS variables so untouched pages
+   get the correct theme without needing a full component rewrite. */
+.btn,
+.btn-primary,
+.btn-ghost,
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.5rem;
+  border: none;
+  outline: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.15s;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-primary {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+.btn-primary:hover { filter: brightness(0.88); }
+.btn-primary:disabled { opacity: 0.5; pointer-events: none; }
+.btn-ghost {
+  color: var(--foreground);
+  background-color: transparent;
+}
+.btn-ghost:hover { background-color: var(--muted); }
+.btn-ghost:disabled { opacity: 0.5; pointer-events: none; }
+.btn-danger {
+  background-color: color-mix(in oklch, var(--destructive) 12%, transparent);
+  color: var(--destructive);
+}
+.btn-danger:hover { background-color: color-mix(in oklch, var(--destructive) 22%, transparent); }
+.btn-danger:disabled { opacity: 0.5; pointer-events: none; }
+.input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--input);
+  background-color: var(--background);
+  color: var(--foreground);
+  font-size: 0.875rem;
+}
+.input::placeholder { color: var(--muted-foreground); }
+.input:focus { outline: none; border-color: var(--ring); }
+.input:disabled { opacity: 0.5; }
+.label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  background-color: var(--secondary);
+  color: var(--secondary-foreground);
+}
+.card {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05), 0 4px 12px rgba(0,0,0,0.05);
+}
+.section-heading {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 1rem 0.75rem 0.25rem;
 }
 
 /* Tiptap markdown editor surface. Mirrors the SkillPreview look so toggling
@@ -148,6 +215,26 @@
 .activity-citrus-badge {
   @apply inline-grid place-items-center;
   animation: citrus-bob 1.3s ease-in-out infinite;
+}
+
+@keyframes pressed-bottle-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.pressed-bottle-spin {
+  animation: pressed-bottle-spin 1s linear infinite;
+  will-change: transform;
+}
+
+@keyframes juice-rise {
+  0%, 5%   { transform: scaleY(0); }
+  55%, 80% { transform: scaleY(1); }
+  100%     { transform: scaleY(0); }
+}
+.bottle-juice-fill {
+  animation: juice-rise 3.5s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: bottom;
 }
 
 .activity-citrus-icon {

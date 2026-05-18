@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   LuLoader, LuTriangleAlert, LuSave, LuX, LuChevronLeft, LuChevronRight,
-  LuZoomIn, LuZoomOut,
+  LuZoomIn, LuZoomOut, LuPanelLeft, LuMaximize2,
 } from "react-icons/lu";
 import { api } from "../lib/api";
 import {
@@ -37,6 +37,7 @@ export function SlideEditor({
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [thumbsVisible, setThumbsVisible] = useState(true);
   const canvasRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -168,6 +169,13 @@ export function SlideEditor({
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-neutral-200 bg-neutral-50 shrink-0">
+        <button
+          className="btn-ghost p-1 shrink-0"
+          onClick={() => setThumbsVisible((v) => !v)}
+          title={thumbsVisible ? "Hide thumbnails" : "Show thumbnails"}
+        >
+          <LuPanelLeft className="size-3.5" />
+        </button>
         <div className="text-sm font-medium text-ink-900 truncate min-w-0 flex-1">
           {filename}
         </div>
@@ -196,6 +204,16 @@ export function SlideEditor({
           <button className="btn-ghost p-1" onClick={() => setScale((s) => Math.max(0.2, s - 0.1))} title="Zoom out">
             <LuZoomOut className="size-3.5" />
           </button>
+          <button
+            className="btn-ghost p-1"
+            title="Fit to window"
+            onClick={() => {
+              if (!containerRef.current) return;
+              setScale(Math.min(1, (containerRef.current.clientWidth - 32) / SLIDE_W));
+            }}
+          >
+            <LuMaximize2 className="size-3.5" />
+          </button>
         </div>
         {source.kind === "kb" && (
           <button
@@ -218,25 +236,27 @@ export function SlideEditor({
       {/* Body */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Thumbnail strip */}
-        <div className="w-[140px] shrink-0 bg-neutral-100 border-r border-neutral-200 overflow-y-auto flex flex-col gap-2 p-2">
-          {doc.slides.map((s, i) => (
-            <button
-              key={i}
-              onClick={() => navigateTo(i)}
-              className={[
-                "rounded border-2 overflow-hidden shrink-0 transition-all",
-                i === currentIdx
-                  ? "border-violet-500 shadow-md"
-                  : "border-transparent hover:border-neutral-300",
-              ].join(" ")}
-              style={{ aspectRatio: `${doc.width}/${doc.height}` }}
-            >
-              {s.parsed
-                ? <SlideThumbnail slide={s.parsed} width={doc.width} height={doc.height} />
-                : <div className="w-full h-full bg-neutral-200" style={{ aspectRatio: `${doc.width}/${doc.height}` }} />}
-            </button>
-          ))}
-        </div>
+        {thumbsVisible && (
+          <div className="w-[140px] shrink-0 bg-neutral-100 border-r border-neutral-200 overflow-y-auto flex flex-col gap-2 p-2">
+            {doc.slides.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => navigateTo(i)}
+                className={[
+                  "rounded border-2 overflow-hidden shrink-0 transition-all",
+                  i === currentIdx
+                    ? "border-violet-500 shadow-md"
+                    : "border-transparent hover:border-neutral-300",
+                ].join(" ")}
+                style={{ aspectRatio: `${doc.width}/${doc.height}` }}
+              >
+                {s.parsed
+                  ? <SlideThumbnail slide={s.parsed} width={doc.width} height={doc.height} />
+                  : <div className="w-full h-full bg-neutral-200" style={{ aspectRatio: `${doc.width}/${doc.height}` }} />}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Slide canvas area */}
         <div
