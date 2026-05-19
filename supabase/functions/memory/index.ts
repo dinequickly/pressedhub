@@ -54,7 +54,7 @@ router.post("/stores", async (req) => {
   if (ENV.ANTHROPIC_API_KEY) {
     try {
       const created = await AnthropicMemoryStores.create({
-        display_name: parsed.name,
+        name: parsed.name,
         description: parsed.description || undefined,
       });
       anthropicId = created.id;
@@ -82,7 +82,7 @@ router.post("/stores/:id/sync-to-anthropic", async (req, params) => {
   if (!store) throw new NotFound("Memory store not found");
   if (store.anthropic_id) return ok({ store, anthropic_id: store.anthropic_id });
   const created = await AnthropicMemoryStores.create({
-    display_name: store.name,
+    name: store.name,
     description: store.description || undefined,
   });
   const { data: updated, error } = await user.db

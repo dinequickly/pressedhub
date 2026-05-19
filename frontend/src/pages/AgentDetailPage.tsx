@@ -9,7 +9,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   LuArrowLeft, LuTrash, LuSend, LuRefreshCw, LuEye, LuPencil,
   LuSparkles, LuTarget, LuBot, LuDatabase, LuFileText,
-  LuPaperclip, LuClock, LuPlus, LuPause, LuPlay, LuX,
+  LuPaperclip, LuClock, LuPlus, LuPause, LuPlay, LuX, LuBrain,
 } from "react-icons/lu";
 import {
   api, type Agent, type AgentSchedule, type Environment, type KbFile,
@@ -391,6 +391,9 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
   );
   const [pinnedInput, setPinnedInput] = useState("");
 
+  const hasMemory = (agent.default_resources?.memory_store_ids ?? []).length > 0;
+  const [memoryEnabled, setMemoryEnabled] = useState(hasMemory);
+
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -406,7 +409,8 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
     rubricMd !== (agent.outcome?.rubric_md ?? "") ||
     maxIters !== (agent.outcome?.max_iterations ?? 5) ||
     !setEq(selectedSkillIds, new Set(initialSkillIds)) ||
-    JSON.stringify(pinnedKbNames) !== JSON.stringify(agent.default_resources?.pinned_kb_names ?? []);
+    JSON.stringify(pinnedKbNames) !== JSON.stringify(agent.default_resources?.pinned_kb_names ?? []) ||
+    memoryEnabled !== hasMemory;
 
   async function save() {
     setSaving(true); setErr(null);
@@ -430,9 +434,15 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
         skills: skillsPayload,
         mcp_servers: agent.mcp_servers,
         outcome,
+        // Toggling memory on: pass auto_memory=true so the backend provisions
+        // a store if one doesn't exist yet. Toggling off: clear the ids so new
+        // sessions don't mount stale stores (the stores themselves are kept).
+        auto_memory: memoryEnabled && !hasMemory,
         default_resources: {
           kb_file_ids: agent.default_resources?.kb_file_ids ?? [],
-          memory_store_ids: agent.default_resources?.memory_store_ids ?? [],
+          memory_store_ids: memoryEnabled
+            ? (agent.default_resources?.memory_store_ids ?? [])
+            : [],
           pinned_kb_names: pinnedKbNames,
         },
       });
@@ -578,6 +588,45 @@ function ConfigPanel({ agent, onSaved }: { agent: Agent; onSaved: () => void }) 
           pinnedInput={pinnedInput}
           setPinnedInput={setPinnedInput}
         />
+
+        <Section icon={<LuBrain className="size-4" />} title="Memory">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <div className="mt-0.5">
+              <input
+                type="checkbox"
+                checked={memoryEnabled}
+                onChange={(e) => setMemoryEnabled(e.target.checked)}
+              />
+            </div>
+            <div className="flex-1">
+              <div className="text-sm font-medium">Persistent memory</div>
+              <div className="text-[11px] text-ink-500 mt-0.5">
+                {hasMemory
+                  ? "A private memory store is mounted read/write at /mnt/memory/ in every session."
+                  : "Enable to provision a private memory store. The agent will remember findings and context across sessions."}
+              </div>
+            </div>
+          </label>
+          {hasMemory && memoryEnabled && (
+            <div className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 rounded-lg px-2.5 py-1.5">
+              <LuDatabase className="size-3 shrink-0" />
+              <span className="truncate">
+                {agent.default_resources?.memory_store_ids?.length ?? 0} store
+                {(agent.default_resources?.memory_store_ids?.length ?? 0) !== 1 ? "s" : ""} attached
+              </span>
+            </div>
+          )}
+          {memoryEnabled && !hasMemory && (
+            <div className="mt-2 text-[11px] text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5">
+              Save to provision the memory store.
+            </div>
+          )}
+          {!memoryEnabled && hasMemory && (
+            <div className="mt-2 text-[11px] text-ink-500 bg-neutral-100 rounded-lg px-2.5 py-1.5">
+              Disabling removes the store from future sessions but does not delete it.
+            </div>
+          )}
+        </Section>
 
         <SchedulesSection agentId={agent.id} />
 

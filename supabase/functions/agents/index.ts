@@ -71,27 +71,29 @@ router.post("/", async (req) => {
   // gets it mounted at /mnt/memory/ automatically.
   const defaultResources = parsed.default_resources ?? { kb_file_ids: [], memory_store_ids: [], pinned_kb_names: [] };
   if (parsed.auto_memory && !defaultResources.memory_store_ids?.length) {
+    let anthropicId: string | null = null;
     try {
       const anthropicStore = await AnthropicMemoryStores.create({
-        display_name: `${parsed.name} Memory`,
+        name: `${parsed.name} Memory`,
         description: `Private working memory for the ${parsed.name} agent.`,
       });
-      const { data: storeRow } = await user.db
-        .from("memory_stores")
-        .insert({
-          name: `${parsed.name} Memory`,
-          description: `Private working memory for the ${parsed.name} agent.`,
-          scope: "agent",
-          owner_id: user.id,
-          anthropic_id: anthropicStore.id,
-        })
-        .select("id")
-        .single();
-      if (storeRow) {
-        defaultResources.memory_store_ids = [storeRow.id as string];
-      }
+      anthropicId = anthropicStore.id;
     } catch (err) {
-      console.warn("[agents] auto-create memory store failed (non-fatal):", (err as Error).message);
+      console.warn("[agents] Anthropic memory store create failed, creating local-only:", (err as Error).message);
+    }
+    const { data: storeRow } = await user.db
+      .from("memory_stores")
+      .insert({
+        name: `${parsed.name} Memory`,
+        description: `Private working memory for the ${parsed.name} agent.`,
+        scope: "agent",
+        owner_id: user.id,
+        anthropic_id: anthropicId,
+      })
+      .select("id")
+      .single();
+    if (storeRow) {
+      defaultResources.memory_store_ids = [storeRow.id as string];
     }
   }
 
@@ -177,34 +179,38 @@ router.patch("/:id", async (req, params) => {
   if (parsed.auto_memory && !existingStoreIds.length) {
     const incomingIds = (parsed.default_resources?.memory_store_ids ?? []);
     if (!incomingIds.length) {
+      const agentName = (parsed.name as string | undefined) ?? (existing.name as string);
+      // Try to sync to Anthropic; fall back to local-only so the store row
+      // exists and the user can retry the sync from the Memory page.
+      let anthropicId: string | null = null;
       try {
-        const agentName = (parsed.name as string | undefined) ?? (existing.name as string);
         const anthropicStore = await AnthropicMemoryStores.create({
-          display_name: `${agentName} Memory`,
+          name: `${agentName} Memory`,
           description: `Private working memory for the ${agentName} agent.`,
         });
-        const { data: storeRow } = await user.db
-          .from("memory_stores")
-          .insert({
-            name: `${agentName} Memory`,
-            description: `Private working memory for the ${agentName} agent.`,
-            scope: "agent",
-            owner_id: user.id,
-            anthropic_id: anthropicStore.id,
-          })
-          .select("id")
-          .single();
-        if (storeRow) {
-          const dr = parsed.default_resources ?? {
-            kb_file_ids: existingDefaultResources.kb_file_ids ?? [],
-            pinned_kb_names: existingDefaultResources.pinned_kb_names ?? [],
-            memory_store_ids: [],
-          };
-          (dr as Record<string, unknown>).memory_store_ids = [storeRow.id as string];
-          parsed.default_resources = dr as typeof parsed.default_resources;
-        }
+        anthropicId = anthropicStore.id;
       } catch (err) {
-        console.warn("[agents] PATCH auto-create memory store failed (non-fatal):", (err as Error).message);
+        console.warn("[agents] PATCH Anthropic memory store create failed, creating local-only:", (err as Error).message);
+      }
+      const { data: storeRow } = await user.db
+        .from("memory_stores")
+        .insert({
+          name: `${agentName} Memory`,
+          description: `Private working memory for the ${agentName} agent.`,
+          scope: "agent",
+          owner_id: user.id,
+          anthropic_id: anthropicId,
+        })
+        .select("id")
+        .single();
+      if (storeRow) {
+        const dr = parsed.default_resources ?? {
+          kb_file_ids: existingDefaultResources.kb_file_ids ?? [],
+          pinned_kb_names: existingDefaultResources.pinned_kb_names ?? [],
+          memory_store_ids: [],
+        };
+        (dr as Record<string, unknown>).memory_store_ids = [storeRow.id as string];
+        parsed.default_resources = dr as typeof parsed.default_resources;
       }
     }
   }

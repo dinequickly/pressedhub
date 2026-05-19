@@ -469,7 +469,7 @@ export function collectAnthropicFileIds(events: Array<Record<string, unknown>>):
 export type AnthropicMemoryStoreRecord = { id: string } & Record<string, unknown>;
 
 export const AnthropicMemoryStores = {
-  create: (input: { display_name: string; description?: string }) =>
+  create: (input: { name: string; description?: string }) =>
     request<AnthropicMemoryStoreRecord>("POST", "/v1/memory_stores", input),
   retrieve: (id: string) =>
     request<AnthropicMemoryStoreRecord>("GET", `/v1/memory_stores/${id}`),

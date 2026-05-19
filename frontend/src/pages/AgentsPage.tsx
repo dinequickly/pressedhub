@@ -66,6 +66,7 @@ function CreateAgentModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [role, setRole] = useState("");
   const [emoji, setEmoji] = useState("🤖");
   const [systemPrompt, setSystemPrompt] = useState("You are a helpful assistant.");
+  const [autoMemory, setAutoMemory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   return (
@@ -80,15 +81,18 @@ function CreateAgentModal({ open, onClose }: { open: boolean; onClose: () => voi
               setBusy(true); setErr(null);
               try {
                 await api.post<Agent>("/agents", {
-                  name, role, emoji, model: DEFAULT_AGENT_MODEL, system_prompt: systemPrompt,
+                  name, role, emoji, model: DEFAULT_AGENT_MODEL,
+                  system_prompt: systemPrompt,
+                  auto_memory: autoMemory,
                 });
                 refresh("/agents"); onClose();
-                setName(""); setRole(""); setSystemPrompt("You are a helpful assistant.");
+                setName(""); setRole(""); setEmoji("🤖");
+                setSystemPrompt("You are a helpful assistant."); setAutoMemory(false);
               } catch (e) { setErr((e as Error).message); }
               finally { setBusy(false); }
             }}
           >
-            Create
+            {busy ? "Creating…" : "Create"}
           </button>
         </div>
       }
@@ -112,10 +116,23 @@ function CreateAgentModal({ open, onClose }: { open: boolean; onClose: () => voi
           <label className="label block mb-1">Instructions</label>
           <textarea className="input font-mono text-xs" rows={5} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} />
         </div>
+        <label className="flex items-start gap-3 p-3 rounded-lg border border-neutral-200 hover:border-violet-300 cursor-pointer transition-colors">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={autoMemory}
+            onChange={(e) => setAutoMemory(e.target.checked)}
+          />
+          <div>
+            <div className="text-sm font-medium">Persistent memory</div>
+            <div className="text-[11px] text-ink-500 mt-0.5">
+              Provisions a private memory store so this agent remembers findings
+              and context across sessions. The agent reads and writes it at{" "}
+              <code className="font-mono">/mnt/memory/</code>.
+            </div>
+          </div>
+        </label>
         {err && <div className="text-rose-600 text-sm">{err}</div>}
-        <div className="text-[11px] text-ink-500">
-          This uses the workspace agent backend, so creation will only work when the server connection is configured.
-        </div>
       </div>
     </Modal>
   );
